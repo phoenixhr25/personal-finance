@@ -1,0 +1,22 @@
+# ── 个人真实数据（不上传）──
+income_statement.ipynb
+income_statement_original_run.ipynb
+config.py
+asset_overview.png
+pr_work/
+anaconda_projects/
+
+# ── Jupyter ──
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+
+# ── macOS ──
+.DS_Store
