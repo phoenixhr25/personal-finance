@@ -14,7 +14,7 @@ from finance_engine import (
     compute_pension, compute_hpf, compute_insurance,
     compute_funds, compute_stocks, compute_deposits,
     build_rows, weighted_avg_return, retirement_projection,
-    eaa, cagr,
+    eaa, cagr, auto_monthly_pension,
 )
 from market_api import fetch_fund_prices, fetch_stock_prices
 
@@ -103,8 +103,40 @@ with st.sidebar:
     # 养老
     st.subheader("① 养老保险")
     pension_account = st.number_input("个人账户余额", value=float(_p.get("account", 100_000)), step=1000.0)
-    pension_monthly = st.number_input("预计月领金额", value=float(_p.get("monthly", 3_000)), step=100.0)
     pension_rate    = st.number_input("账户年化利率", value=float(_p.get("rate", 0.055)), step=0.001, format="%.3f")
+
+    pension_auto = st.toggle("按城职保公式自动推算月领金额", value=bool(_p.get("auto", False)))
+
+    if pension_auto:
+        CITY_WAGES = {
+            "深圳": 12500, "北京": 14000, "上海": 13500,
+            "广州": 10500, "杭州": 10500, "成都": 8500,
+            "武汉": 8500,  "南京": 9500,  "其他（手动输入）": 0,
+        }
+        city_choice = st.selectbox("所在城市", list(CITY_WAGES.keys()),
+                                   index=list(CITY_WAGES.keys()).index(_p.get("city", "深圳"))
+                                         if _p.get("city") in CITY_WAGES else 0)
+        if city_choice == "其他（手动输入）":
+            city_avg_wage = st.number_input("城市月社平工资（元）", value=float(_p.get("city_wage", 8000)), step=100.0)
+        else:
+            city_avg_wage = float(CITY_WAGES[city_choice])
+            st.caption(f"参考社平工资：¥{city_avg_wage:,.0f}/月（可在城市栏选「其他」手动修改）")
+
+        wage_growth   = st.number_input("社平工资年增长率", value=float(_p.get("wage_growth", 0.04)), step=0.005, format="%.3f")
+        contrib_years = st.number_input("预计缴费年限（年）", value=int(_p.get("contrib_years", 20)), step=1)
+        contrib_index = st.number_input("缴费指数", value=float(_p.get("contrib_index", 1.0)), step=0.05, format="%.2f",
+                                        help="缴费基数 / 社平工资，一般在 0.6～3 之间，按社平工资缴纳填 1.0")
+        retire_age    = st.selectbox("退休年龄", [50, 55, 60, 65],
+                                     index=[50,55,60,65].index(int(_p.get("retire_age", 60))))
+        y_to_retire_pension = (date_retire - date.today()).days / 365.25
+        pension_monthly = auto_monthly_pension(
+            pension_account, pension_rate, y_to_retire_pension,
+            city_avg_wage, wage_growth, contrib_years, contrib_index, retire_age,
+        )
+        st.info(f"推算月领金额：**¥{pension_monthly:,.0f}**（退休时，含基础养老金+个人账户养老金）")
+    else:
+        pension_monthly = st.number_input("预计月领金额（手动填写）", value=float(_p.get("monthly", 3_000)), step=100.0)
+        city_choice = city_avg_wage = wage_growth = contrib_years = contrib_index = retire_age = None
 
     st.divider()
 
@@ -191,7 +223,12 @@ with st.sidebar:
             "date_retire": str(date_retire), "date_life_end": str(date_life_end),
             "date_base_1": str(date_base_1), "date_base_2": str(date_base_2),
         },
-        "pension":  {"account": pension_account, "monthly": pension_monthly, "rate": pension_rate},
+        "pension": {
+            "account": pension_account, "monthly": pension_monthly, "rate": pension_rate,
+            "auto": pension_auto, "city": city_choice, "city_wage": city_avg_wage,
+            "wage_growth": wage_growth, "contrib_years": contrib_years,
+            "contrib_index": contrib_index, "retire_age": retire_age,
+        },
         "hpf":      {"balance": hpf_balance, "years": hpf_years},
         "insurance": ins_inputs,
         "funds":    fund_text,

@@ -37,6 +37,21 @@ def cagr(v0, v1, years):
     return (v1 / v0) ** (1 / years) - 1
 
 
+DISTRIBUTION_MONTHS = {50: 195, 55: 170, 60: 139, 65: 101}
+
+def auto_monthly_pension(personal_account, account_rate, years_to_retire,
+                          city_avg_wage, wage_growth_rate,
+                          contribution_years, contribution_index,
+                          retire_age=60):
+    """按城镇职工基本养老保险公式推算月领金额"""
+    account_at_retire = personal_account * (1 + account_rate) ** years_to_retire
+    wage_at_retire    = city_avg_wage * (1 + wage_growth_rate) ** years_to_retire
+    basic   = wage_at_retire * (1 + contribution_index) / 2 * contribution_years * 0.01
+    dist_m  = DISTRIBUTION_MONTHS.get(retire_age, 139)
+    personal_part = account_at_retire / dist_m
+    return basic + personal_part
+
+
 def compute_pension(params, discount_rate, date_retire, date_life_end, today):
     delay_m   = (date_retire - today).days // 30
     receive_m = (date_life_end - date_retire).days // 30
