@@ -390,11 +390,32 @@ st.divider()
 st.subheader("资产结构 & 四期对比")
 chart_col, proj_col = st.columns([1, 1])
 
+PALETTE = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444",
+           "#8B5CF6", "#06B6D4", "#F97316", "#84CC16"]
+
 with chart_col:
-    layer_mv = df.groupby("layer")["market_value"].sum()
-    fig, ax = plt.subplots(figsize=(5, 4))
-    ax.pie(layer_mv.values, labels=layer_mv.index, autopct="%1.1f%%", startangle=90)
-    ax.set_title("当前资产结构")
+    layer_mv  = df.groupby("layer")["market_value"].sum()
+    short_labels = [l.split(" ", 1)[-1] for l in layer_mv.index]  # 去掉①②序号
+    colors = PALETTE[:len(layer_mv)]
+
+    fig, ax = plt.subplots(figsize=(5, 4.5), facecolor="#FAFAFA")
+    wedges, texts, autotexts = ax.pie(
+        layer_mv.values,
+        labels=short_labels,
+        autopct="%1.1f%%",
+        startangle=90,
+        colors=colors,
+        wedgeprops={"linewidth": 1.5, "edgecolor": "white"},
+        pctdistance=0.78,
+    )
+    for t in texts:
+        t.set_fontsize(9)
+    for at in autotexts:
+        at.set_fontsize(8)
+        at.set_color("white")
+        at.set_fontweight("bold")
+    ax.set_title("当前资产结构", fontsize=12, fontweight="bold", pad=12)
+    fig.tight_layout()
     st.pyplot(fig)
     plt.close()
 
@@ -411,18 +432,34 @@ with proj_col:
     y_to_retire = (date_retire - today).days / 365.25
     snap_ret = retirement_projection(snap_now, proj_invest_rate, ins_inputs, y_to_retire)
 
-    totals = {
-        str(date_base_1): sum(snap_b1.values()),
-        str(date_base_2): sum(snap_b2.values()),
-        "当前":            sum(snap_now.values()),
-        f"{date_retire.year}推算": sum(snap_ret.values()),
-    }
-    fig2, ax2 = plt.subplots(figsize=(5, 4))
-    bars = ax2.bar(totals.keys(), totals.values(), color=["#4C72B0","#DD8452","#55A868","#C44E52"])
-    ax2.bar_label(bars, fmt="¥%.0f", padding=3, fontsize=8)
-    ax2.set_title("四期总资产对比")
-    ax2.set_ylabel("元")
-    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"¥{x/1e4:.0f}万"))
+    labels = [str(date_base_1), str(date_base_2), "当前", f"{date_retire.year}推算"]
+    values = [sum(snap_b1.values()), sum(snap_b2.values()),
+              sum(snap_now.values()), sum(snap_ret.values())]
+    bar_colors = ["#94A3B8", "#64748B", "#3B82F6", "#10B981"]
+
+    fig2, ax2 = plt.subplots(figsize=(5, 4.5), facecolor="#FAFAFA")
+    ax2.set_facecolor("#F8FAFC")
+    bars = ax2.bar(labels, values, color=bar_colors, width=0.55,
+                   linewidth=0, zorder=3)
+    ax2.yaxis.grid(True, color="#E2E8F0", linewidth=0.8, zorder=0)
+    ax2.set_axisbelow(True)
+
+    for bar, val in zip(bars, values):
+        ax2.text(bar.get_x() + bar.get_width() / 2,
+                 bar.get_height() + max(values) * 0.015,
+                 f"¥{val:,.0f}",
+                 ha="center", va="bottom", fontsize=7.5, fontweight="bold")
+
+    ax2.set_title("四期总资产对比", fontsize=12, fontweight="bold", pad=12)
+    ax2.set_ylabel("元", fontsize=9)
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"¥{x/1e4:,.0f}万"))
+    ax2.tick_params(axis="x", labelsize=8.5)
+    ax2.tick_params(axis="y", labelsize=8)
+    for spine in ["top", "right"]:
+        ax2.spines[spine].set_visible(False)
+    ax2.spines["left"].set_color("#CBD5E1")
+    ax2.spines["bottom"].set_color("#CBD5E1")
+    fig2.tight_layout()
     st.pyplot(fig2)
     plt.close()
 
