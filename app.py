@@ -18,11 +18,42 @@ from finance_engine import (
 from market_api import fetch_fund_prices, fetch_stock_prices
 
 # ── 字体 ──────────────────────────────────────────────────────────────────
-for font in ["PingFang SC", "PingFang HK", "Heiti TC", "STHeiti", "SimHei",
-             "Noto Sans CJK SC", "Noto Sans SC", "WenQuanYi Micro Hei", "DejaVu Sans"]:
-    if font in [f.name for f in matplotlib.font_manager.fontManager.ttflist]:
-        matplotlib.rcParams["font.family"] = font
-        break
+import os, glob as _glob
+
+def _setup_font():
+    fm = matplotlib.font_manager
+    # 1. 强制重建缓存（捕获 packages.txt 安装的字体）
+    try:
+        fm._load_fontmanager(try_read_cache=False)
+    except Exception:
+        try:
+            fm._rebuild()
+        except Exception:
+            pass
+
+    # 2. 先按名称查
+    known = [f.name for f in fm.fontManager.ttflist]
+    for name in ["PingFang SC", "PingFang HK", "Heiti TC", "STHeiti", "SimHei",
+                 "Noto Sans CJK SC", "Noto Sans SC", "WenQuanYi Micro Hei"]:
+        if name in known:
+            matplotlib.rcParams["font.family"] = name
+            return
+
+    # 3. 按路径找 Noto/WenQuanYi ttf/ttc/otf
+    patterns = [
+        "/usr/share/fonts/**/*CJK*",
+        "/usr/share/fonts/**/*Noto*SC*",
+        "/usr/share/fonts/**/*WenQuanYi*",
+    ]
+    for pat in patterns:
+        hits = _glob.glob(pat, recursive=True)
+        if hits:
+            fm.fontManager.addfont(hits[0])
+            prop = fm.FontProperties(fname=hits[0])
+            matplotlib.rcParams["font.family"] = prop.get_name()
+            return
+
+_setup_font()
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 st.set_page_config(page_title="个人资产收益整合表", page_icon="📊", layout="wide")
