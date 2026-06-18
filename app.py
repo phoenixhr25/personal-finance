@@ -386,84 +386,101 @@ for layer in df["layer"].unique():
 
 st.divider()
 
+# ── 图表数据准备 ───────────────────────────────────────
+snap_now = {
+    "pension_hpf": pension["personal_account"] + hpf["balance"],
+    "insurance":   sum(i["cash_value"] for i in ins_list),
+    "investment":  sum(f["market_value"] for f in fund_list) + sum(s["market_value"] for s in stock_list),
+    "cash":        sum(d["balance"] for d in dep_list),
+}
+snap_b1  = {"pension_hpf": b1_ph, "insurance": b1_ins, "investment": b1_inv, "cash": b1_csh}
+snap_b2  = {"pension_hpf": b2_ph, "insurance": b2_ins, "investment": b2_inv, "cash": b2_csh}
+y_to_retire = (date_retire - today).days / 365.25
+snap_ret = retirement_projection(snap_now, proj_invest_rate, ins_inputs, y_to_retire)
+
 # ── 图表 ──────────────────────────────────────────────
+from matplotlib.ticker import FuncFormatter as _FF
+
 st.subheader("资产结构 & 四期对比")
-chart_col, proj_col = st.columns([1, 1])
 
-PALETTE      = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444",
-                "#8B5CF6", "#06B6D4", "#F97316", "#84CC16"]
-MORANDI_PIE  = ["#B5C4B1", "#D4B8A5", "#A8B8C8", "#C4B0B8",
-                "#B8C4A8", "#C8B8A0", "#A8B8C0", "#C0B0C0"]
+matplotlib.rcParams.update({
+    "figure.facecolor": "#F7F8FA",
+    "axes.facecolor":   "#F7F8FA",
+    "axes.titleweight": "bold",
+    "axes.titlesize":   13,
+    "font.size":        10,
+    "axes.unicode_minus": False,
+})
 
-with chart_col:
-    layer_mv  = df.groupby("layer")["market_value"].sum()
-    short_labels = [l.split(" ", 1)[-1] for l in layer_mv.index]  # 去掉①②序号
-    colors = MORANDI_PIE[:len(layer_mv)]
+layer_mv     = df.groupby("layer")["market_value"].sum()
+layer_names  = list(layer_mv.index)
+layer_vals   = list(layer_mv.values)
+dates_str    = [str(date_base_1), str(date_base_2), "当前", f"{date_retire.year}推算"]
+bar_vals     = [sum(snap_b1.values()), sum(snap_b2.values()),
+                sum(snap_now.values()), sum(snap_ret.values())]
 
-    fig, ax = plt.subplots(figsize=(5, 4.5), facecolor="#FAFAFA")
-    wedges, texts, autotexts = ax.pie(
-        layer_mv.values,
-        labels=short_labels,
-        autopct="%1.1f%%",
-        startangle=90,
-        colors=colors,
-        wedgeprops={"linewidth": 2, "edgecolor": "white"},
-        pctdistance=0.78,
-    )
-    for t in texts:
-        t.set_fontsize(9)
-    for at in autotexts:
-        at.set_fontsize(8)
-        at.set_color("#4A4A4A")
-        at.set_fontweight("bold")
-    ax.set_title("当前资产结构", fontsize=12, fontweight="bold", pad=12)
-    fig.tight_layout()
-    st.pyplot(fig)
-    plt.close()
+fig, axes = plt.subplots(1, 2, figsize=(13, 5.5),
+                          gridspec_kw={"width_ratios": [1, 1.25]},
+                          facecolor="#F7F8FA")
+fig.suptitle("个人资产概览", fontsize=18, fontweight="bold", color="#172B4D", y=1.02)
 
-with proj_col:
-    snap_now = {
-        "pension_hpf": pension["personal_account"] + hpf["balance"],
-        "insurance":   sum(i["cash_value"] for i in ins_list),
-        "investment":  sum(f["market_value"] for f in fund_list) + sum(s["market_value"] for s in stock_list),
-        "cash":        sum(d["balance"] for d in dep_list),
-    }
-    snap_b1 = {"pension_hpf": b1_ph, "insurance": b1_ins, "investment": b1_inv, "cash": b1_csh}
-    snap_b2 = {"pension_hpf": b2_ph, "insurance": b2_ins, "investment": b2_inv, "cash": b2_csh}
+# 左图：环形图
+PIE_COLORS = ["#264653", "#2A9D8F", "#E9C46A", "#E76F51", "#8AB17D", "#7B8FA1"]
+wedges, _, autotexts = axes[0].pie(
+    layer_vals,
+    startangle=90,
+    counterclock=False,
+    colors=PIE_COLORS[:len(layer_vals)],
+    autopct=lambda pct: f"{pct:.1f}%" if pct >= 3 else "",
+    pctdistance=0.78,
+    wedgeprops={"width": 0.38, "edgecolor": "#F7F8FA", "linewidth": 3},
+)
+for at in autotexts:
+    at.set_color("white"); at.set_fontsize(9); at.set_fontweight("bold")
 
-    y_to_retire = (date_retire - today).days / 365.25
-    snap_ret = retirement_projection(snap_now, proj_invest_rate, ins_inputs, y_to_retire)
+axes[0].text(0,  0.08, "总资产",           ha="center", color="#6B778C", fontsize=10)
+axes[0].text(0, -0.09, f"¥{total_mv:,.0f}", ha="center", color="#172B4D", fontsize=14, fontweight="bold")
+axes[0].set_title(f"资产配置 · {today}", pad=14, color="#172B4D")
+axes[0].legend(
+    wedges,
+    [f"{n}  ¥{v:,.0f}" for n, v in zip(layer_names, layer_vals)],
+    loc="lower center", bbox_to_anchor=(0.5, -0.22),
+    ncol=2, frameon=False, fontsize=9,
+)
 
-    labels = [str(date_base_1), str(date_base_2), "当前", f"{date_retire.year}推算"]
-    values = [sum(snap_b1.values()), sum(snap_b2.values()),
-              sum(snap_now.values()), sum(snap_ret.values())]
-    bar_colors = ["#94A3B8", "#64748B", "#3B82F6", "#10B981"]
+# 右图：柱状图
+_bar_colors = ["#B8C8D8"] * len(bar_vals)
+_bar_colors[-1] = "#2A9D8F"
+bars = axes[1].bar(dates_str, bar_vals, width=0.56, color=_bar_colors, edgecolor="none")
+max_val = max(bar_vals)
+axes[1].set_ylim(0, max_val * 1.18)
 
-    fig2, ax2 = plt.subplots(figsize=(5, 4.5), facecolor="#FAFAFA")
-    ax2.set_facecolor("#F8FAFC")
-    bars = ax2.bar(labels, values, color=bar_colors, width=0.55,
-                   linewidth=0, zorder=3)
-    ax2.yaxis.grid(True, color="#E2E8F0", linewidth=0.8, zorder=0)
-    ax2.set_axisbelow(True)
+for i, (bar, val) in enumerate(zip(bars, bar_vals)):
+    cx = bar.get_x() + bar.get_width() / 2
+    axes[1].text(cx, val + max_val * 0.025,
+                 f"¥{val:,.0f}", ha="center", va="bottom",
+                 fontsize=9, fontweight="bold", color="#172B4D")
+    if i > 0 and bar_vals[i - 1]:
+        pct = (val - bar_vals[i - 1]) / bar_vals[i - 1] * 100
+        axes[1].text(cx, val * 0.92,
+                     f"{'+'if pct>=0 else ''}{pct:.1f}%",
+                     ha="center", va="top", fontsize=8, fontweight="bold",
+                     color="white" if i == len(bar_vals) - 1 else "#44546A")
 
-    for bar, val in zip(bars, values):
-        ax2.text(bar.get_x() + bar.get_width() / 2,
-                 bar.get_height() + max(values) * 0.015,
-                 f"¥{val:,.0f}",
-                 ha="center", va="bottom", fontsize=7.5, fontweight="bold")
+axes[1].set_title("总资产变化趋势", pad=14, color="#172B4D")
+axes[1].set_ylabel("资产金额", fontsize=9)
+axes[1].yaxis.set_major_formatter(_FF(lambda x, _: f"¥{x/1e4:,.0f}万"))
+axes[1].grid(axis="y", color="#DDE2E8", linewidth=0.8, alpha=0.8)
+axes[1].set_axisbelow(True)
+axes[1].tick_params(axis="both", length=0, colors="#5E6C84", labelsize=8.5)
 
-    ax2.set_title("四期总资产对比", fontsize=12, fontweight="bold", pad=12)
-    ax2.set_ylabel("元", fontsize=9)
-    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"¥{x/1e4:,.0f}万"))
-    ax2.tick_params(axis="x", labelsize=8.5)
-    ax2.tick_params(axis="y", labelsize=8)
-    for spine in ["top", "right"]:
-        ax2.spines[spine].set_visible(False)
-    ax2.spines["left"].set_color("#CBD5E1")
-    ax2.spines["bottom"].set_color("#CBD5E1")
-    fig2.tight_layout()
-    st.pyplot(fig2)
-    plt.close()
+for ax in axes:
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+fig.tight_layout()
+st.pyplot(fig)
+plt.close()
 
 st.divider()
 
