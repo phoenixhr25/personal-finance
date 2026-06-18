@@ -256,10 +256,12 @@ st.title("📊 个人资产收益整合表")
 st.caption("管理会计利润表结构 · 按流动性分层（低 → 高）")
 
 with st.expander("📖 使用说明"):
-    st.markdown(
-        "📄 **[点击查看完整使用指引（GitHub）](https://github.com/phoenixhr25/personal-finance/blob/main/USER_GUIDE.md)**\n\n"
-        "涵盖：各模块数据来源、字段说明、结果解读、配置保存与恢复、常见问题。"
-    )
+    try:
+        _guide_path = os.path.join(os.path.dirname(__file__), "USER_GUIDE.md")
+        with open(_guide_path, encoding="utf-8") as _f:
+            st.markdown(_f.read())
+    except Exception:
+        st.caption("使用说明文件未找到，请参考 GitHub 仓库中的 USER_GUIDE.md")
 
 if not run:
     st.info("← 在左侧填写参数后，点击「运行计算」")
