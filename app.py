@@ -18,7 +18,8 @@ from finance_engine import (
 from market_api import fetch_fund_prices, fetch_stock_prices
 
 # ── 字体 ──────────────────────────────────────────────────────────────────
-for font in ["PingFang SC", "PingFang HK", "Heiti TC", "STHeiti", "SimHei", "DejaVu Sans"]:
+for font in ["PingFang SC", "PingFang HK", "Heiti TC", "STHeiti", "SimHei",
+             "Noto Sans CJK SC", "Noto Sans SC", "WenQuanYi Micro Hei", "DejaVu Sans"]:
     if font in [f.name for f in matplotlib.font_manager.fontManager.ttflist]:
         matplotlib.rcParams["font.family"] = font
         break
