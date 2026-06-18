@@ -390,13 +390,15 @@ st.divider()
 st.subheader("资产结构 & 四期对比")
 chart_col, proj_col = st.columns([1, 1])
 
-PALETTE = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444",
-           "#8B5CF6", "#06B6D4", "#F97316", "#84CC16"]
+PALETTE      = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444",
+                "#8B5CF6", "#06B6D4", "#F97316", "#84CC16"]
+MORANDI_PIE  = ["#B5C4B1", "#D4B8A5", "#A8B8C8", "#C4B0B8",
+                "#B8C4A8", "#C8B8A0", "#A8B8C0", "#C0B0C0"]
 
 with chart_col:
     layer_mv  = df.groupby("layer")["market_value"].sum()
     short_labels = [l.split(" ", 1)[-1] for l in layer_mv.index]  # 去掉①②序号
-    colors = PALETTE[:len(layer_mv)]
+    colors = MORANDI_PIE[:len(layer_mv)]
 
     fig, ax = plt.subplots(figsize=(5, 4.5), facecolor="#FAFAFA")
     wedges, texts, autotexts = ax.pie(
@@ -405,14 +407,14 @@ with chart_col:
         autopct="%1.1f%%",
         startangle=90,
         colors=colors,
-        wedgeprops={"linewidth": 1.5, "edgecolor": "white"},
+        wedgeprops={"linewidth": 2, "edgecolor": "white"},
         pctdistance=0.78,
     )
     for t in texts:
         t.set_fontsize(9)
     for at in autotexts:
         at.set_fontsize(8)
-        at.set_color("white")
+        at.set_color("#4A4A4A")
         at.set_fontweight("bold")
     ax.set_title("当前资产结构", fontsize=12, fontweight="bold", pad=12)
     fig.tight_layout()
