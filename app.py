@@ -120,7 +120,7 @@ with st.sidebar:
             city_avg_wage = st.number_input("城市月社平工资（元）", value=float(_p.get("city_wage", 8000)), step=100.0)
         else:
             city_avg_wage = float(CITY_WAGES[city_choice])
-            st.caption(f"参考社平工资：¥{city_avg_wage:,.0f}/月（可在城市栏选「其他」手动修改）")
+            st.caption(f"参考社平工资：¥{city_avg_wage:,.0f}/月（非私营单位均薪，数据可能已过时，建议自查当地社保局官网后选「其他」手动输入）")
 
         wage_growth   = st.number_input("社平工资年增长率", value=float(_p.get("wage_growth", 0.04)), step=0.005, format="%.3f")
         contrib_years = st.number_input("预计缴费年限（年）", value=int(_p.get("contrib_years", 20)), step=1)
