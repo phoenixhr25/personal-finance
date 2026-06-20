@@ -75,7 +75,9 @@ with st.sidebar:
     if uploaded is not None:
         try:
             st.session_state["_cfg"] = _json.load(uploaded)
-            st.success("配置已加载")
+            for k in [k for k in st.session_state if k != "_cfg"]:
+                del st.session_state[k]
+            st.rerun()
         except Exception:
             st.error("JSON 解析失败，请检查文件格式")
 
