@@ -73,13 +73,15 @@ with st.sidebar:
     st.subheader("💾 配置文件")
     uploaded = st.file_uploader("导入 JSON 配置", type=["json"], label_visibility="collapsed")
     if uploaded is not None:
-        try:
-            st.session_state["_cfg"] = _json.load(uploaded)
-            for k in [k for k in st.session_state if k != "_cfg"]:
-                del st.session_state[k]
-            st.rerun()
-        except Exception:
-            st.error("JSON 解析失败，请检查文件格式")
+        if st.session_state.get("_upload_id") != uploaded.file_id:
+            try:
+                st.session_state["_cfg"] = _json.load(uploaded)
+                st.session_state["_upload_id"] = uploaded.file_id
+                for k in [k for k in st.session_state if k not in ("_cfg", "_upload_id")]:
+                    del st.session_state[k]
+                st.rerun()
+            except Exception:
+                st.error("JSON 解析失败，请检查文件格式")
 
     _cfg = st.session_state.get("_cfg", {})
     _g   = _cfg.get("global", {})
