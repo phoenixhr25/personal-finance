@@ -75,13 +75,33 @@ with st.sidebar:
     if uploaded is not None:
         if st.session_state.get("_upload_id") != uploaded.file_id:
             try:
-                st.session_state["_cfg"] = _json.load(uploaded)
+                _loaded = _json.load(uploaded)
+                st.session_state["_cfg"]       = _loaded
                 st.session_state["_upload_id"] = uploaded.file_id
-                for k in [k for k in st.session_state if k not in ("_cfg", "_upload_id")]:
-                    del st.session_state[k]
-                st.rerun()
-            except Exception:
-                st.error("JSON 解析失败，请检查文件格式")
+                _lh  = _loaded.get("hpf", {})
+                _lsn = _loaded.get("snapshots", {})
+                _lin = _loaded.get("insurance", [])
+                st.session_state["hpf_bal"]  = float(_lh.get("balance", 80_000))
+                st.session_state["b1ph"]  = float(_lsn.get("b1_ph",  50_000))
+                st.session_state["b1ins"] = float(_lsn.get("b1_ins", 10_000))
+                st.session_state["b1inv"] = float(_lsn.get("b1_inv", 30_000))
+                st.session_state["b1csh"] = float(_lsn.get("b1_csh", 50_000))
+                st.session_state["b2ph"]  = float(_lsn.get("b2_ph",  120_000))
+                st.session_state["b2ins"] = float(_lsn.get("b2_ins",  30_000))
+                st.session_state["b2inv"] = float(_lsn.get("b2_inv", 100_000))
+                st.session_state["b2csh"] = float(_lsn.get("b2_csh", 100_000))
+                for i, ins in enumerate(_lin):
+                    st.session_state[f"ins_name_{i}"] = ins.get("name", f"储蓄险{i+1}")
+                    st.session_state[f"ins_cv_{i}"]   = float(ins.get("cash_value", 50_000))
+                    st.session_state[f"ins_cost_{i}"] = float(ins.get("cost_basis", 50_000))
+                    st.session_state[f"ins_prem_{i}"] = float(ins.get("annual_premium", 0))
+                    st.session_state[f"ins_left_{i}"] = int(ins.get("premium_years_left", 0))
+                    st.session_state[f"ins_mat_{i}"]  = float(ins.get("maturity_value", 50_000))
+                    st.session_state[f"ins_yrs_{i}"]  = int(ins.get("years_to_maturity", 0))
+                    st.session_state[f"ins_irr_{i}"]  = float(ins.get("policy_irr", 0.030))
+                st.success("配置已加载")
+            except Exception as e:
+                st.error(f"JSON 解析失败：{e}")
 
     _cfg = st.session_state.get("_cfg", {})
     _g   = _cfg.get("global", {})
