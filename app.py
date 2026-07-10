@@ -110,6 +110,7 @@ with st.sidebar:
     _h   = _cfg.get("hpf", {})
     _ins = _cfg.get("insurance", [])
     _sn  = _cfg.get("snapshots", {})
+    _sm  = _cfg.get("sim", {})
 
     st.divider()
 
@@ -243,10 +244,11 @@ with st.sidebar:
 
     # ── 情景模拟参数 ───────────────────────────────────
     st.subheader("情景模拟参数")
-    monthly_income    = st.number_input("月税后收入（元）",     value=19_000, step=500)
-    monthly_expense   = st.number_input("月总支出（元）",       value=11_000, step=500)
-    retire_expense_mo = st.number_input("退休月支出（元）",     value=8_000,  step=500)
-    semi_income       = st.number_input("半退休月收入（元）",   value=10_000, step=500)
+    monthly_income         = st.number_input("月税后收入（元）",     value=float(_sm.get("monthly_income",    19_000)), step=500.0)
+    monthly_expense        = st.number_input("月总支出（元）",       value=float(_sm.get("monthly_expense",   11_000)), step=500.0)
+    retire_expense_mo      = st.number_input("退休月支出（元）",     value=float(_sm.get("retire_expense_mo",  8_000)), step=500.0)
+    semi_income            = st.number_input("半退休月收入（元）",   value=float(_sm.get("semi_income",       10_000)), step=500.0)
+    income_interrupt_months = st.number_input("收入中断月数",        value=int(_sm.get("income_interrupt_months", 12)),  step=1, min_value=1)
 
     st.divider()
 
@@ -271,6 +273,11 @@ with st.sidebar:
         "snapshots": {
             "b1_ph": b1_ph, "b1_ins": b1_ins, "b1_inv": b1_inv, "b1_csh": b1_csh,
             "b2_ph": b2_ph, "b2_ins": b2_ins, "b2_inv": b2_inv, "b2_csh": b2_csh,
+        },
+        "sim": {
+            "monthly_income": monthly_income, "monthly_expense": monthly_expense,
+            "retire_expense_mo": retire_expense_mo, "semi_income": semi_income,
+            "income_interrupt_months": income_interrupt_months,
         },
     }
     st.download_button(
@@ -541,11 +548,11 @@ _sp = _sim_params(
     monthly_income, monthly_expense, retire_expense_mo,
     proj_invest_rate, today, date_retire,
 )
-_12mo_end = today + _rdelta(months=12)
+_interrupt_end = today + _rdelta(months=int(income_interrupt_months))
 _scenarios = [
-    ("① 继续工作",       []),
-    ("② 收入中断12个月", [(today, _12mo_end, 0)]),
-    ("③ 半退休至退休",   [(today, date_retire, semi_income)]),
+    ("① 继续工作",                          []),
+    (f"② 收入中断{int(income_interrupt_months)}个月", [(today, _interrupt_end, 0)]),
+    ("③ 半退休至退休",                      [(today, date_retire, semi_income)]),
 ]
 _results = [run_scenario(name, sched, _sp) for name, sched in _scenarios]
 
