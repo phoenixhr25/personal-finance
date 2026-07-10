@@ -166,3 +166,122 @@ def retirement_projection(snap_now, proj_invest_rate, ins_list, y_to_retire):
         "investment":  snap_now["investment"]  * (1 + proj_invest_rate) ** y_to_retire,
         "cash":        snap_now["cash"]        * (1 + 0.025) ** y_to_retire,
     }
+
+
+# ── V2 情景模拟 & 压力测试 ─────────────────────────────────────────────────
+
+def _sim_params(pension, hpf, ins_list, fund_list, stock_list, dep_list,
+                monthly_income, monthly_expense, retire_expense_mo,
+                proj_invest_rate, today, date_retire):
+    ins_irr = sum(i["policy_irr"] for i in ins_list) / max(len(ins_list), 1)
+    return dict(
+        cash          = sum(d["balance"]       for d in dep_list),
+        investment    = sum(f["market_value"]  for f in fund_list)
+                      + sum(s["market_value"]  for s in stock_list),
+        pension_bal   = pension["personal_account"],
+        pension_rate  = pension["account_annual_return"],
+        monthly_pension = pension["monthly_pension"],
+        hpf_bal       = hpf["balance"],
+        hpf_rate      = hpf["annual_rate"],
+        ins_val       = sum(i["cash_value"]    for i in ins_list),
+        ins_irr       = ins_irr,
+        monthly_income    = monthly_income,
+        monthly_expense   = monthly_expense,
+        retire_expense_mo = retire_expense_mo,
+        proj_rate     = proj_invest_rate,
+        today         = today,
+        date_retire   = date_retire,
+    )
+
+
+def run_scenario(name, income_schedule, p):
+    from dateutil.relativedelta import relativedelta as _rd
+    cash        = p["cash"]
+    investment  = p["investment"]
+    pension_bal = p["pension_bal"]
+    hpf_bal     = p["hpf_bal"]
+    ins_val     = p["ins_val"]
+
+    r_p   = (1 + p["pension_rate"]) ** (1/12) - 1
+    r_h   = (1 + p["hpf_rate"])     ** (1/12) - 1
+    r_inv = (1 + p["proj_rate"])     ** (1/12) - 1
+    r_ins = (1 + p["ins_irr"])       ** (1/12) - 1
+
+    cash_depl = None
+    cur = p["today"]
+    while cur < p["date_retire"]:
+        income = p["monthly_income"]
+        for (fd, td, inc) in income_schedule:
+            if fd <= cur < td:
+                income = inc
+                break
+        pension_bal *= (1 + r_p)
+        hpf_bal     *= (1 + r_h)
+        investment  *= (1 + r_inv)
+        ins_val     *= (1 + r_ins)
+        cash += income - p["monthly_expense"]
+        if cash < 0:
+            if cash_depl is None:
+                cash_depl = cur
+            sell = min(-cash, investment)
+            investment = max(investment - sell, 0)
+            cash = 0
+        cur += _rd(months=1)
+
+    total    = pension_bal + hpf_bal + ins_val + investment + cash
+    inv_cash = investment + cash
+    target   = p["retire_expense_mo"] * 12 / 0.04
+    return dict(name=name, cash_depl=cash_depl,
+                pension_2036=pension_bal, hpf_2036=hpf_bal,
+                ins_2036=ins_val, invest_2036=investment,
+                cash_2036=cash, total_2036=total,
+                inv_cash=inv_cash,
+                gap=max(0.0, target - total))
+
+
+def run_stress(label, p, investment_shock=1.0, inflation=0.0,
+               proj_rate=None, pension_mult=1.0):
+    from dateutil.relativedelta import relativedelta as _rd
+    if proj_rate is None:
+        proj_rate = p["proj_rate"]
+
+    cash        = p["cash"]
+    investment  = p["investment"] * investment_shock
+    pension_bal = p["pension_bal"]
+    hpf_bal     = p["hpf_bal"]
+    ins_val     = p["ins_val"]
+
+    r_p   = (1 + p["pension_rate"]) ** (1/12) - 1
+    r_h   = (1 + p["hpf_rate"])     ** (1/12) - 1
+    r_inv = (1 + proj_rate)          ** (1/12) - 1
+    r_ins = (1 + p["ins_irr"])       ** (1/12) - 1
+
+    cash_depl = None
+    cur = p["today"]
+    month_n = 0
+    while cur < p["date_retire"]:
+        expense = p["monthly_expense"] * (1 + inflation) ** (month_n / 12)
+        pension_bal *= (1 + r_p)
+        hpf_bal     *= (1 + r_h)
+        investment  *= (1 + r_inv)
+        ins_val     *= (1 + r_ins)
+        cash += p["monthly_income"] - expense
+        if cash < 0:
+            if cash_depl is None:
+                cash_depl = cur
+            sell = min(-cash, investment)
+            investment = max(investment - sell, 0)
+            cash = 0
+        cur += _rd(months=1)
+        month_n += 1
+
+    total    = pension_bal + hpf_bal + ins_val + investment + cash
+    inv_cash = investment + cash
+    eff_pension = p["monthly_pension"] * pension_mult
+    gap_mo      = max(0.0, p["retire_expense_mo"] - eff_pension)
+    target_adj  = gap_mo * 12 / 0.04
+    return dict(label=label, total_2036=total, inv_cash=inv_cash,
+                cash_depl=cash_depl,
+                target_adj=target_adj,
+                gap_adj=max(0.0, target_adj - inv_cash),
+                coverage=inv_cash / target_adj if target_adj > 0 else float("inf"))

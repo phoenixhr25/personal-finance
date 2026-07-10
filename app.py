@@ -15,6 +15,7 @@ from finance_engine import (
     compute_funds, compute_stocks, compute_deposits,
     build_rows, weighted_avg_return, retirement_projection,
     eaa, cagr, auto_monthly_pension,
+    _sim_params, run_scenario, run_stress,
 )
 from market_api import fetch_fund_prices, fetch_stock_prices
 
@@ -237,6 +238,15 @@ with st.sidebar:
         b2_ins = st.number_input("储蓄险",      value=float(_sn.get("b2_ins",  30_000)), key="b2ins")
         b2_inv = st.number_input("投资",         value=float(_sn.get("b2_inv", 100_000)), key="b2inv")
         b2_csh = st.number_input("现金",         value=float(_sn.get("b2_csh", 100_000)), key="b2csh")
+
+    st.divider()
+
+    # ── 情景模拟参数 ───────────────────────────────────
+    st.subheader("情景模拟参数")
+    monthly_income    = st.number_input("月税后收入（元）",     value=19_000, step=500)
+    monthly_expense   = st.number_input("月总支出（元）",       value=11_000, step=500)
+    retire_expense_mo = st.number_input("退休月支出（元）",     value=8_000,  step=500)
+    semi_income       = st.number_input("半退休月收入（元）",   value=10_000, step=500)
 
     st.divider()
 
@@ -518,6 +528,88 @@ r2.metric("增量", f"¥{retire_total - now_total:+,.0f}")
 r3.metric("推算用投资年化", f"{proj_invest_rate:.1%}", help="在左侧「退休推算投资年化」修改")
 st.caption(f"⚠️ 加权历史年化 {w_return:.2%} 含历史浮盈，不可直接用于预测。此处使用手动设定的 {proj_invest_rate:.1%}。")
 st.caption("⚠️ 推算不含未来工资转入，为「停止工作后纯靠现有资产增值」的保守估算。")
+
+st.divider()
+
+# ── V2 情景模拟 ────────────────────────────────────────
+st.subheader("情景模拟")
+
+from dateutil.relativedelta import relativedelta as _rdelta
+
+_sp = _sim_params(
+    pension, hpf, ins_list, fund_list, stock_list, dep_list,
+    monthly_income, monthly_expense, retire_expense_mo,
+    proj_invest_rate, today, date_retire,
+)
+_12mo_end = today + _rdelta(months=12)
+_scenarios = [
+    ("① 继续工作",       []),
+    ("② 收入中断12个月", [(today, _12mo_end, 0)]),
+    ("③ 半退休至退休",   [(today, date_retire, semi_income)]),
+]
+_results = [run_scenario(name, sched, _sp) for name, sched in _scenarios]
+
+_target = retire_expense_mo * 12 / 0.04
+
+import pandas as pd
+_sc_df = pd.DataFrame([{
+    "情景":         r["name"],
+    "现金耗尽":     "不耗尽" if r["cash_depl"] is None else str(r["cash_depl"])[:7],
+    f"{date_retire.year}总资产": f"¥{r['total_2036']:,.0f}",
+    "退休缺口":     "无" if r["gap"] == 0 else f"¥{r['gap']:,.0f}",
+} for r in _results])
+st.dataframe(_sc_df, hide_index=True, use_container_width=True)
+st.caption(f"4% 法则退休目标：¥{_target:,.0f}（月支出 ¥{retire_expense_mo:,}）")
+
+# ── 养老金调整视角 ─────────────────────────────────────
+st.subheader("养老金调整视角")
+_pension_mo  = pension["monthly_pension"]
+_gap_mo      = max(0.0, retire_expense_mo - _pension_mo)
+_target_adj  = _gap_mo * 12 / 0.04
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("养老金月领（推算）", f"¥{_pension_mo:,.0f}")
+c2.metric("退休月支出",        f"¥{retire_expense_mo:,}")
+c3.metric("需投资组合覆盖",     f"¥{_gap_mo:,.0f}/月")
+c4.metric("调整后4%目标",      f"¥{_target_adj:,.0f}" if _target_adj > 0 else "¥0（盈余）")
+
+_investable = [r["invest_2036"] + r["cash_2036"] for r in _results]
+_adj_df = pd.DataFrame([{
+    "情景":         r["name"],
+    "可投资资产":   f"¥{iv:,.0f}",
+    "vs调整目标":   f"+¥{iv-_target_adj:,.0f}" if _target_adj > 0 else "无上限",
+    "覆盖倍数":     f"{iv/_target_adj:.1f}x" if _target_adj > 0 else "∞",
+} for r, iv in zip(_results, _investable)])
+st.dataframe(_adj_df, hide_index=True, use_container_width=True)
+if _gap_mo == 0:
+    st.success(f"养老金 ¥{_pension_mo:,.0f}/月 已超过退休支出，投资组合为纯额外缓冲。")
+else:
+    st.info(f"养老金覆盖退休支出的 {_pension_mo/retire_expense_mo:.0%}，缺口 ¥{_gap_mo:,.0f}/月需投资组合补足。")
+
+# ── 压力测试 ──────────────────────────────────────────
+st.subheader("压力测试")
+st.caption("以「继续工作」为基准，施加单一或组合冲击")
+
+_baseline = _results[0]["total_2036"]
+_stress_cases = [
+    ("基准（继续工作）",     dict()),
+    ("市场跌 20%",          dict(investment_shock=0.8)),
+    ("市场跌 40%",          dict(investment_shock=0.6)),
+    ("通胀 3%",             dict(inflation=0.03)),
+    ("养老金打七折",         dict(pension_mult=0.7)),
+    ("投资收益 1%",          dict(proj_rate=0.01)),
+    ("组合冲击(跌20%+7折)", dict(investment_shock=0.8, pension_mult=0.7)),
+]
+_stress_results = [run_stress(lbl, _sp, **kw) for lbl, kw in _stress_cases]
+
+_st_df = pd.DataFrame([{
+    "情景":       t["label"],
+    "2036总资产": f"¥{t['total_2036']:,.0f}",
+    "vs基准":     "—" if abs(t["total_2036"] - _baseline) < 1 else f"{t['total_2036']-_baseline:+,.0f}",
+    "可投资资产": f"¥{t['inv_cash']:,.0f}",
+    "覆盖倍数":   "∞" if t["coverage"] == float("inf") else f"{t['coverage']:.1f}x",
+} for t in _stress_results])
+st.dataframe(_st_df, hide_index=True, use_container_width=True)
 
 st.divider()
 st.caption("数据仅用于个人财务规划参考，行情来自新浪财经 & 天天基金，存在延迟。")
