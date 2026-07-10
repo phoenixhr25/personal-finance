@@ -6,13 +6,21 @@
 
 ## 这是什么
 
-一个 Jupyter Notebook 个人财务分析工具，参考**管理会计利润表结构**设计：
+个人财务分析工具，提供两个入口：
+
+- **Streamlit Web App**（`app.py`）：交互式界面，侧边栏填参数，一键运行，支持情景模拟、压力测试、导出 JSON 配置
+- **Jupyter Notebook**（`income_statement_template.ipynb`）：逐格填写，适合逐项核对和定制计算逻辑
+
+两个入口共享同一套计算引擎（`finance_engine.py`），参考**管理会计利润表结构**设计：
 
 - 资产按流动性从上到下排列（养老金 → 储蓄险 → 基金 → A股 → 现金）
 - 自动拉取 A股/基金实时行情，无需手动更新价格
 - 计算每层 NPV、年化收益率、加权平均收益率
 - 四期对比（基期 / 对比节点 / 当前 / 退休目标），看清资产积累轨迹
 - 退休推算：按各层独立利率，告诉你退休那年资产预计是多少
+- **情景模拟**（V2）：继续工作 / 收入中断 12 个月 / 半退休，对比退休时总资产和缺口
+- **养老金调整视角**：把养老金月领金额从退休支出中剥离，精确算出投资组合需要覆盖多少
+- **压力测试**：市场下跌 / 通胀 / 养老金打折 / 低收益率等 6 种冲击下的资产变化
 
 **适合人群**：有社保、公积金、储蓄险、基金、A股、银行存款的在职人员，想把所有资产放在一张表里看清楚。
 
@@ -23,12 +31,20 @@
 ### 1. 安装依赖
 
 ```bash
-pip install akshare numpy-financial pandas matplotlib python-dateutil
+pip install akshare numpy-financial pandas matplotlib python-dateutil streamlit
 ```
 
-> 或在 notebook 第一格执行，会自动安装。
+> 或在 notebook 第一格执行，会自动安装（Streamlit 除外）。
 
-### 2. 填写你的数据
+### 2a. 启动 Streamlit App（推荐）
+
+```bash
+streamlit run app.py
+```
+
+浏览器自动打开，左侧侧边栏逐项填写 → 点击「🚀 运行计算」→「💾 导出配置」保存 JSON 配置文件。
+
+### 2b. 使用 Jupyter Notebook
 
 打开 `income_statement_template.ipynb`，按顺序填写以下几格（每格都有 `📋` 标注）：
 
@@ -121,9 +137,12 @@ Net Present Value（净现值）。用折现率把未来的钱折算到今天的
 
 ```
 personal-finance/
-├── income_statement_template.ipynb  ← 模板（填你的数据）
+├── app.py                           ← Streamlit Web App（推荐入口）
+├── finance_engine.py                ← 计算引擎（NPV / 退休推算 / 情景模拟 / 压力测试）
+├── income_statement_template.ipynb  ← Notebook 模板（填你的数据）
 ├── income_statement.ipynb           ← 作者自用版（含真实数据，不公开）
 ├── config_example.py                ← 参数说明文件
+├── USER_GUIDE.md                    ← 详细使用说明（也内嵌在 app 内）
 └── README.md                        ← 本文件
 ```
 
