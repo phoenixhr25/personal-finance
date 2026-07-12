@@ -131,7 +131,7 @@ with st.sidebar:
     pension_account = st.number_input("个人账户余额", value=float(_p.get("account", 100_000)), step=1000.0)
     pension_rate    = st.number_input("账户年化利率", value=float(_p.get("rate", 0.055)), step=0.001, format="%.3f")
 
-    pension_auto = st.toggle("按城职保公式自动推算月领金额", value=bool(_p.get("auto", False)))
+    pension_auto = st.toggle("按城职保公式自动推算月领金额", value=bool(_p.get("auto", True)))
 
     if pension_auto:
         CITY_WAGES = {

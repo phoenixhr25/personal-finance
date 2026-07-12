@@ -116,11 +116,17 @@ def compute_deposits(dep_list, discount_rate):
     result = []
     for d in dep_list:
         t  = d["term_years"]
-        fv = d["balance"] * (1 + d["rate"]) ** max(t, 1)
-        result.append({**d, "future_value": fv,
-                       "npv": pv_lump(fv, discount_rate, max(t, 0.001)),
-                       "annualized_return": d["rate"],
-                       "cost_basis": d["balance"], "market_value": d["balance"]})
+        if t == 0:
+            result.append({**d, "future_value": d["balance"],
+                           "npv": d["balance"],
+                           "annualized_return": d["rate"],
+                           "cost_basis": d["balance"], "market_value": d["balance"]})
+        else:
+            fv = d["balance"] * (1 + d["rate"]) ** t
+            result.append({**d, "future_value": fv,
+                           "npv": pv_lump(fv, discount_rate, t),
+                           "annualized_return": d["rate"],
+                           "cost_basis": d["balance"], "market_value": d["balance"]})
     return result
 
 
