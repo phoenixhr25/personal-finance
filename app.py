@@ -194,22 +194,26 @@ with st.sidebar:
 
     st.divider()
 
-    # 基金
+    # 基金 A类（定投）
     st.subheader("④ 基金")
-    fund_text = st.text_area(
-        "基金列表（每行：代码,份额,成本净值,买入年-月-日）",
-        value=_cfg.get("funds", "000001,10000,1.50,2023-01-01\n110022,5000,2.10,2023-06-01"),
-        height=120,
+    st.markdown("**A 类 · 定投基金**")
+    st.caption("格式：代码, 份额, 持有成本(¥总额), 当前市值(¥总额) · 支持中文逗号 · 直接从理财App抄数字")
+    fund_dca_text = st.text_area(
+        "定投基金",
+        value=_cfg.get("funds_dca", ""),
+        height=100,
+        label_visibility="collapsed",
     )
 
-    st.divider()
-
-    # A股
-    st.subheader("⑤ A股/ETF")
+    # 基金 B类（单笔）并入精确持仓
+    st.markdown("**B 类 · 单笔买入 / ETF / A股**")
+    st.caption("格式：代码, 股数/份额, 成本价, 买入日期[, 当前价]")
     stock_text = st.text_area(
-        "持仓列表（每行：代码,股数,成本价,买入年-月-日）",
+        "单笔持仓",
         value=_cfg.get("stocks", "600036,100,35.00,2023-01-01\n000001,200,12.50,2023-06-01"),
-        height=100,
+        height=120,
+        label_visibility="collapsed",
+        help="基金、ETF、A股统一格式。第5列当前价可选，填入后跳过 API 拉取。",
     )
 
     st.divider()
@@ -252,6 +256,16 @@ with st.sidebar:
 
     st.divider()
 
+    # ── 目标资产配置 ───────────────────────────────────
+    st.subheader("目标资产配置（%）")
+    st.caption("设定各层目标比例，合计建议 100%")
+    target_ph_pct  = st.number_input("社保层目标 %",  value=int(_sm.get("target_ph",  30)), min_value=0, max_value=100, step=5)
+    target_ins_pct = st.number_input("保险层目标 %",  value=int(_sm.get("target_ins", 15)), min_value=0, max_value=100, step=5)
+    target_inv_pct = st.number_input("投资层目标 %",  value=int(_sm.get("target_inv", 40)), min_value=0, max_value=100, step=5)
+    target_csh_pct = st.number_input("现金层目标 %",  value=int(_sm.get("target_csh", 15)), min_value=0, max_value=100, step=5)
+
+    st.divider()
+
     # ── 导出配置 ──────────────────────────────────────
     export_data = {
         "global": {
@@ -267,8 +281,8 @@ with st.sidebar:
         },
         "hpf":      {"balance": hpf_balance, "years": hpf_years},
         "insurance": ins_inputs,
-        "funds":    fund_text,
-        "stocks":   stock_text,
+        "funds_dca": fund_dca_text,
+        "stocks":    stock_text,
         "deposits": dep_text,
         "snapshots": {
             "b1_ph": b1_ph, "b1_ins": b1_ins, "b1_inv": b1_inv, "b1_csh": b1_csh,
@@ -278,6 +292,8 @@ with st.sidebar:
             "monthly_income": monthly_income, "monthly_expense": monthly_expense,
             "retire_expense_mo": retire_expense_mo, "semi_income": semi_income,
             "income_interrupt_months": income_interrupt_months,
+            "target_ph": target_ph_pct, "target_ins": target_ins_pct,
+            "target_inv": target_inv_pct, "target_csh": target_csh_pct,
         },
     }
     st.download_button(
@@ -311,18 +327,58 @@ if not run:
 today = date.today()
 
 # ── 解析文本输入 ──────────────────────────────────────
-def parse_funds(text):
+def parse_fund_dca(text):
+    """A类定投基金：代码, 份额, 持有成本(总额¥), 当前市值(总额¥)
+    内部自动换算为每单位净值，中文逗号兼容。"""
     result = []
     for line in text.strip().splitlines():
+        line = line.replace("，", ",")
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 4:
             continue
         try:
+            code        = parts[0]
+            shares      = float(parts[1])
+            total_cost  = float(parts[2])
+            total_value = float(parts[3])
+            if shares <= 0:
+                continue
             result.append({
-                "code": parts[0], "shares": float(parts[1]),
-                "cost_nav": float(parts[2]),
-                "buy_date": datetime.strptime(parts[3], "%Y-%m-%d").date(),
-                "manual_nav": None,
+                "code":       code,
+                "shares":     shares,
+                "cost_nav":   total_cost  / shares,
+                "manual_nav": total_value / shares,
+                "buy_date":   None,
+            })
+        except Exception:
+            pass
+    return result
+
+
+def parse_funds(text):
+    """B类单笔基金（已并入精确持仓，保留备用）"""
+    result = []
+    for line in text.strip().splitlines():
+        line = line.replace("，", ",")
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            code      = parts[0]
+            shares    = float(parts[1])
+            cost_nav  = float(parts[2])
+            buy_date  = None
+            manual_nav = None
+            if len(parts) >= 4:
+                try:
+                    buy_date = datetime.strptime(parts[3], "%Y-%m-%d").date()
+                except ValueError:
+                    manual_nav = float(parts[3]) if parts[3] else None
+            if len(parts) >= 5:
+                manual_nav = float(parts[4]) if parts[4] else None
+            result.append({
+                "code": code, "shares": shares, "cost_nav": cost_nav,
+                "buy_date": buy_date, "manual_nav": manual_nav,
             })
         except Exception:
             pass
@@ -331,15 +387,16 @@ def parse_funds(text):
 def parse_stocks(text):
     result = []
     for line in text.strip().splitlines():
+        line = line.replace("，", ",")
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 4:
             continue
         try:
             result.append({
-                "code": parts[0], "shares": int(parts[1]),
+                "code": parts[0], "shares": float(parts[1]),
                 "cost_price": float(parts[2]),
                 "buy_date": datetime.strptime(parts[3], "%Y-%m-%d").date(),
-                "manual_price": None,
+                "manual_price": float(parts[4]) if len(parts) > 4 and parts[4] else None,
             })
         except Exception:
             pass
@@ -361,14 +418,29 @@ def parse_deposits(text):
             pass
     return result
 
-fund_input_raw  = parse_funds(fund_text)
-stock_input_raw = parse_stocks(stock_text)
+fund_input_raw  = parse_fund_dca(fund_dca_text)   # A类：定投，总金额格式
+stock_input_raw = parse_stocks(stock_text)      # B类：单笔基金/ETF/A股，有买入日期
 dep_input_raw   = parse_deposits(dep_text)
 
 # ── 拉取行情 ──────────────────────────────────────────
 with st.spinner("正在拉取实时行情…"):
     fund_input  = fetch_fund_prices(fund_input_raw)
     stock_input = fetch_stock_prices(stock_input_raw)
+
+_price_ok    = [f.get("name", f["code"]) for f in fund_input  if f.get("current_nav")]
+_price_ok   += [s.get("name", s["code"]) for s in stock_input if s.get("current_price")]
+_price_fail  = [f.get("code") for f in fund_input  if not f.get("current_nav")]
+_price_fail += [s.get("code") for s in stock_input if not s.get("current_price")]
+if _price_fail:
+    st.warning(
+        f"{len(_price_fail)} 个资产未获取到行情（{', '.join(_price_fail)}），"
+        "使用成本价代替，年化收益率显示 0%。\n\n"
+        "解决：从支付宝/招商等 App 查当前净值，在左侧基金列表填入当前净值：\n"
+        "定投格式（无日期）→ `018128, 份额, 成本净值, 当前净值`\n"
+        "精确格式（有日期）→ `018128, 份额, 成本净值, 买入日期, 当前净值`"
+    )
+elif _price_ok:
+    st.caption(f"✅ 行情已获取：{', '.join(_price_ok)}")
 
 # ── 计算 ──────────────────────────────────────────────
 pension_params = {
@@ -418,12 +490,23 @@ for layer in df["layer"].unique():
     st.markdown(f"**{layer}**")
     display = sub[["category","market_value","cost_basis","浮盈","annual_return","npv"]].copy()
     display.columns = ["资产","市值","成本","浮盈","年化收益率","NPV"]
-    display["市值"]  = display["市值"].map("¥{:,.0f}".format)
-    display["成本"]  = display["成本"].map("¥{:,.0f}".format)
-    display["浮盈"]  = display["浮盈"].map("¥{:+,.0f}".format)
+
+    _mv   = sub["market_value"].sum()
+    _cost = sub["cost_basis"].sum()
+    _npv  = sub["npv"].sum()
+    _gain = _mv - _cost
+    _wav  = sum(sub["cost_basis"] / _cost * sub["annual_return"]) if _cost else 0
+
+    display["市值"]       = display["市值"].map("¥{:,.0f}".format)
+    display["成本"]       = display["成本"].map("¥{:,.0f}".format)
+    display["浮盈"]       = display["浮盈"].map("¥{:+,.0f}".format)
     display["年化收益率"] = display["年化收益率"].map("{:.1%}".format)
-    display["NPV"]  = display["NPV"].map("¥{:,.0f}".format)
+    display["NPV"]        = display["NPV"].map("¥{:,.0f}".format)
     st.dataframe(display, use_container_width=True, hide_index=True)
+    st.caption(
+        f"小计 ｜ 市值 ¥{_mv:,.0f} ｜ 成本 ¥{_cost:,.0f} ｜"
+        f" 浮盈 ¥{_gain:+,.0f} ｜ 加权年化 {_wav:.1%} ｜ NPV ¥{_npv:,.0f}"
+    )
 
 st.divider()
 
@@ -617,6 +700,179 @@ _st_df = pd.DataFrame([{
     "覆盖倍数":   "∞" if t["coverage"] == float("inf") else f"{t['coverage']:.1f}x",
 } for t in _stress_results])
 st.dataframe(_st_df, hide_index=True, use_container_width=True)
+
+st.divider()
+
+# ── V3 投资建议 ────────────────────────────────────────────────────────────
+st.subheader("💡 投资建议")
+
+_layer_vals = {
+    "社保层": snap_now["pension_hpf"],
+    "保险层": snap_now["insurance"],
+    "投资层": snap_now["investment"],
+    "现金层": snap_now["cash"],
+}
+_total_now  = sum(_layer_vals.values())
+_layer_pcts = {k: v / _total_now if _total_now else 0 for k, v in _layer_vals.items()}
+
+# A. 持仓结构诊断
+st.markdown("**A. 持仓结构诊断**")
+_diags = []
+
+if _layer_pcts["投资层"] < 0.20:
+    _diags.append(("warning", "投资层比例偏低",
+                   f"当前占 {_layer_pcts['投资层']:.1%}，建议提升至 20% 以上以增强长期增值能力"))
+
+if _layer_pcts["现金层"] > 0.30:
+    _diags.append(("warning", "现金沉淀过多",
+                   f"当前占 {_layer_pcts['现金层']:.1%}，超过 30% 的部分建议转入投资层"))
+
+_inv_assets = fund_list + stock_list
+_inv_total  = _layer_vals["投资层"]
+if _inv_total > 0 and _inv_assets:
+    _max_asset = max(_inv_assets, key=lambda x: x["market_value"])
+    _max_pct   = _max_asset["market_value"] / _inv_total
+    if _max_pct > 0.50:
+        _aname = _max_asset.get("name", _max_asset.get("code", ""))
+        _diags.append(("error", "集中度风险",
+                       f"{_aname} 占投资层 {_max_pct:.1%}，建议将单一资产控制在 50% 以内"))
+
+_non_liquid_pct = (_layer_vals["社保层"] + _layer_vals["保险层"]) / _total_now if _total_now else 0
+if _non_liquid_pct > 0.60:
+    _diags.append(("warning", "整体流动性偏低",
+                   f"社保+保险非流动性资产占 {_non_liquid_pct:.1%}，超过 60%，短期流动性有限"))
+
+if not _diags:
+    st.success("✅ 持仓结构无明显问题")
+else:
+    for _lvl, _title, _msg in _diags:
+        if _lvl == "error":
+            st.error(f"**{_title}**：{_msg}")
+        else:
+            st.warning(f"**{_title}**：{_msg}")
+
+# B. 目标配置偏差表
+st.markdown("**B. 目标配置偏差表**")
+_target_pcts = {
+    "社保层": target_ph_pct  / 100,
+    "保险层": target_ins_pct / 100,
+    "投资层": target_inv_pct / 100,
+    "现金层": target_csh_pct / 100,
+}
+_target_sum  = sum(_target_pcts.values())
+_alloc_rows  = []
+for _lname, _cur_val in _layer_vals.items():
+    _cur_pct = _layer_pcts[_lname]
+    _tgt_pct = _target_pcts[_lname]
+    _dev     = _cur_pct - _tgt_pct
+    _adj     = (_tgt_pct - _cur_pct) * _total_now
+    _alloc_rows.append({
+        "层级":               _lname,
+        "当前":               f"{_cur_pct:.1%}",
+        "目标":               f"{_tgt_pct:.1%}",
+        "偏差":               f"{_dev:+.1%}",
+        "调仓金额（正=增配/负=减配）": f"¥{_adj:+,.0f}",
+    })
+st.dataframe(pd.DataFrame(_alloc_rows), hide_index=True, use_container_width=True)
+if abs(_target_sum - 1.0) > 0.01:
+    st.warning(f"目标配置合计 {_target_sum:.0%}，请在左侧调整至 100%")
+else:
+    st.caption("调仓金额正数 = 需增配，负数 = 需减配")
+
+st.divider()
+
+# ── V3 退休建议 ────────────────────────────────────────────────────────────
+st.subheader("🎯 退休建议")
+
+_retire_target  = retire_expense_mo * 12 / 0.04
+_months_to_ret  = max(int((date_retire - today).days / 30), 1)
+_r_mo           = (1 + proj_invest_rate) ** (1 / 12) - 1
+
+# A. 情景结果文字判断
+st.markdown("**A. 情景结果判断**")
+st.caption(
+    f"4% 法则目标 = 退休月支出 ¥{retire_expense_mo:,} × 12 ÷ 4% = **¥{_retire_target:,.0f}**　｜　"
+    f"⚠️ 此目标未扣除养老金月领，偏保守；扣除后的调整目标见下方「养老金调整视角」"
+)
+for _r in _results:
+    _gap    = _r["gap"]
+    _total  = _r["total_2036"]
+    _cash_d = _r["cash_depl"]
+    with st.expander(_r["name"], expanded=True):
+        if _gap == 0:
+            _margin = _total - _retire_target
+            st.success(f"✅ 财务达标 — 退休总资产 ¥{_total:,.0f}，超出目标 ¥{_margin:,.0f}（安全边际 {_margin / _retire_target:.1%}）")
+            st.caption(f"计算：¥{_total:,.0f}（推算资产）− ¥{_retire_target:,.0f}（目标）= +¥{_margin:,.0f}")
+        else:
+            st.error(f"❌ 退休缺口 ¥{_gap:,.0f} — 退休总资产 ¥{_total:,.0f}，低于 4% 法则目标 ¥{_retire_target:,.0f}")
+            st.caption(f"计算：¥{_retire_target:,.0f}（目标）− ¥{_total:,.0f}（推算资产）= 缺口 ¥{_gap:,.0f}")
+        if _cash_d is not None:
+            _cash_now  = sum(d["balance"] for d in dep_list)
+            _inv_now   = sum(f["market_value"] for f in fund_list) + sum(s["market_value"] for s in stock_list)
+            _liquid    = _cash_now + _inv_now
+            _liq_mo    = int(_liquid / monthly_expense) if monthly_expense else 0
+            st.warning(
+                f"⚠️ 该情景下存款（¥{_cash_now:,.0f}）会先用完，之后从基金/股票变现继续支付生活费。\n\n"
+                f"可动用资产合计（存款 + 基金/股票）= **¥{_liquid:,.0f}**，"
+                f"零收入下约可支撑 **{_liq_mo} 个月**。"
+            )
+        else:
+            st.caption("存款始终为正，无需提前变现投资")
+
+_semi_r = _results[2]
+if _semi_r["gap"] > 0:
+    _extra_mo_semi = _semi_r["gap"] / max(_months_to_ret, 1)   # 简化线性：缺口÷月数
+    _required_semi = semi_income + _extra_mo_semi
+    if _required_semi > monthly_income * 1.5:
+        st.warning(f"💡 半退休建议：窗口期仅 {_months_to_ret} 个月，需将半退休月收入提高至 ¥{_required_semi:,.0f}，"
+                   "超出正常收入范围，不具备操作性。建议考虑延迟退休日期。")
+    else:
+        st.info(f"💡 半退休建议：将半退休月收入从 ¥{semi_income:,.0f} 提高至约 ¥{_required_semi:,.0f}，可消除退休缺口")
+
+# B. 达标路径推算
+st.markdown("**B. 达标路径推算**")
+_cont_r   = _results[0]
+_gap_cont = _cont_r["gap"]
+
+if _gap_cont == 0:
+    _margin_cont = _cont_r["total_2036"] - _retire_target
+    st.success(f"✅ 继续工作情景已达标，安全边际 ¥{_margin_cont:,.0f}（{_margin_cont / _retire_target:.1%}）")
+    st.caption("当前财务路径充裕，无需额外储蓄或推迟退休。")
+else:
+    st.warning(f"⚠️ 继续工作情景存在缺口 ¥{_gap_cont:,.0f}，以下两条路径可补足：")
+    _col_a, _col_b = st.columns(2)
+
+    # 路径一：月额外储蓄（复利终值公式逆推）
+    _extra_mo = (
+        _gap_cont * _r_mo / ((1 + _r_mo) ** _months_to_ret - 1)
+        if _r_mo > 0 else _gap_cont / _months_to_ret
+    )
+    with _col_a:
+        if _extra_mo > monthly_income:
+            st.metric("月额外储蓄法", "不可行")
+            st.caption(f"需每月额外储蓄 ¥{_extra_mo:,.0f}，超过月收入 ¥{monthly_income:,.0f}，"
+                       f"窗口期 {_months_to_ret} 个月内无法实现")
+        else:
+            st.metric("月额外储蓄法", f"¥{_extra_mo:,.0f}/月")
+            st.caption(f"从现在起每月额外存入并以 {proj_invest_rate:.1%} 年化增值，至 {date_retire.year} 年可补足缺口")
+
+    # 路径二：推迟退休（简化线性估算）
+    _monthly_savings = monthly_income - monthly_expense
+    with _col_b:
+        if _monthly_savings > 0 and _r_mo > 0:
+            _inv_cash_now   = snap_now["investment"] + snap_now["cash"]
+            _monthly_growth = _inv_cash_now * _r_mo + _monthly_savings
+            _extra_months   = int(_gap_cont / _monthly_growth) if _monthly_growth > 0 else 9999
+            _extra_years    = _extra_months / 12
+            if _extra_years < 20:
+                st.metric("推迟退休法", f"推迟约 {_extra_years:.1f} 年")
+                st.caption(f"按现有月储蓄 ¥{_monthly_savings:,.0f} 和投资增长，预计最早 {date_retire.year + int(_extra_years) + 1} 年退休")
+            else:
+                st.metric("推迟退休法", "不适用")
+                st.caption("缺口过大，推迟退休单独无法解决，建议优先提高月储蓄")
+        else:
+            st.metric("推迟退休法", "不适用")
+            st.caption("月支出 ≥ 月收入，推迟退休无额外储蓄效果")
 
 st.divider()
 st.caption("数据仅用于个人财务规划参考，行情来自新浪财经 & 天天基金，存在延迟。")

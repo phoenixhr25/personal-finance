@@ -86,14 +86,18 @@ def compute_funds(fund_list, today):
     result = []
     for f in fund_list:
         nav  = f.get("current_nav") or f["cost_nav"]
-        hold = max((today - f["buy_date"]).days / 365.25, 0.001)
         mv   = nav * f["shares"]
         cost = f["cost_nav"] * f["shares"]
+        ret_pct = (mv - cost) / cost if cost else 0
+        if f.get("buy_date"):
+            hold = max((today - f["buy_date"]).days / 365.25, 0.001)
+            ann  = annualized_return(mv, cost, hold)
+        else:
+            hold = 0.0
+            ann  = ret_pct   # 无买入日期：年化退化为总收益率
         result.append({**f, "nav": nav, "market_value": mv, "cost_basis": cost,
-                       "total_return": mv - cost,
-                       "return_pct": (mv - cost) / cost if cost else 0,
-                       "annualized_return": annualized_return(mv, cost, hold),
-                       "holding_years": hold, "npv": mv})
+                       "total_return": mv - cost, "return_pct": ret_pct,
+                       "annualized_return": ann, "holding_years": hold, "npv": mv})
     return result
 
 
@@ -143,11 +147,12 @@ def build_rows(pension, hpf, ins_list, fund_list, stock_list, dep_list):
                      "market_value": ins["cash_value"], "cost_basis": ins["cost_basis"],
                      "npv": ins["npv"], "annual_return": ins["annualized_return"]})
     for f in fund_list:
-        rows.append({"layer": "③ 投资层", "category": f"基金·{f.get('name', f['code'])}",
+        prefix = "定投" if not f.get("buy_date") else "基金"
+        rows.append({"layer": "③ 投资层", "category": f"{prefix}·{f.get('name', f['code'])}",
                      "market_value": f["market_value"], "cost_basis": f["cost_basis"],
                      "npv": f["npv"], "annual_return": f["annualized_return"]})
     for s in stock_list:
-        rows.append({"layer": "③ 投资层", "category": f"A股·{s.get('name', s['code'])}",
+        rows.append({"layer": "③ 投资层", "category": f"精确·{s.get('name', s['code'])}",
                      "market_value": s["market_value"], "cost_basis": s["cost_basis"],
                      "npv": s["npv"], "annual_return": s["annualized_return"]})
     for d in dep_list:

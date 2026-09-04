@@ -82,21 +82,23 @@ def get_fund_price(code: str) -> dict:
 def fetch_fund_prices(fund_input: list) -> list:
     result = []
     for f in fund_input:
-        info = get_fund_price(f["code"])
+        manual = f.get("manual_nav")
+        info   = {} if manual else get_fund_price(f["code"])
         result.append({**f,
-                       "current_nav": info.get("price") or f.get("manual_nav"),
-                       "name": info.get("name") or f["code"],
-                       "change_pct": info.get("change_pct"),
-                       "type": info.get("type", "手动录入")})
+                       "current_nav":  manual or info.get("price"),
+                       "name":         info.get("name") or f["code"],
+                       "change_pct":   info.get("change_pct"),
+                       "type":         "手动录入" if manual else info.get("type", "未获取")})
     return result
 
 
 def fetch_stock_prices(stock_input: list) -> list:
     result = []
     for s in stock_input:
-        info = get_price(s["code"])
+        manual = s.get("manual_price")
+        info   = {} if manual else get_price(s["code"])
         result.append({**s,
-                       "current_price": info.get("price") or s.get("manual_price"),
-                       "name": info.get("name") or s["code"],
-                       "change_pct": info.get("change_pct")})
+                       "current_price": manual or info.get("price"),
+                       "name":          info.get("name") or s["code"],
+                       "change_pct":    info.get("change_pct")})
     return result
