@@ -429,7 +429,6 @@ def parse_deposits(text):
 fund_input_raw  = parse_fund_dca(fund_dca_text)   # A类：定投，总金额格式
 stock_input_raw = parse_stocks(stock_text)      # B类：单笔基金/ETF/A股，有买入日期
 dep_input_raw   = parse_deposits(dep_text)
-st.caption(f"🔍 DEP DEBUG | 行数={len(dep_input_raw)} | raw={repr(dep_text[:60])}")
 
 # ── 拉取行情 ──────────────────────────────────────────
 with st.spinner("正在拉取实时行情…"):
@@ -469,7 +468,6 @@ stock_list  = compute_stocks(stock_input, today)
 dep_list    = compute_deposits(dep_input_raw, discount_rate)
 
 rows = build_rows(pension, hpf, ins_list, fund_list, stock_list, dep_list)
-st.caption(f"🔍 ROWS DEBUG | dep_list={len(dep_list)} | deposit rows={len([r for r in rows if '现金' in r['layer']])} | layers={list(dict.fromkeys(r['layer'] for r in rows))}")
 w_return = weighted_avg_return(rows)
 total_mv   = sum(r["market_value"] for r in rows)
 total_cost = sum(r["cost_basis"] for r in rows)
