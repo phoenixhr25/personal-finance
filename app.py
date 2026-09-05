@@ -100,6 +100,9 @@ with st.sidebar:
                     st.session_state[f"ins_mat_{i}"]  = float(ins.get("maturity_value", 50_000))
                     st.session_state[f"ins_yrs_{i}"]  = int(ins.get("years_to_maturity", 0))
                     st.session_state[f"ins_irr_{i}"]  = float(ins.get("policy_irr", 0.030))
+                st.session_state["fund_dca_text"] = _loaded.get("funds_dca", _loaded.get("funds", ""))
+                st.session_state["stock_text"]    = _loaded.get("stocks", "")
+                st.session_state["dep_text"]      = _loaded.get("deposits", "")
                 st.success("配置已加载")
             except Exception as e:
                 st.error(f"JSON 解析失败：{e}")
@@ -200,9 +203,10 @@ with st.sidebar:
     st.caption("格式：代码, 份额, 持有成本(¥总额), 当前市值(¥总额) · 支持中文逗号 · 直接从理财App抄数字")
     fund_dca_text = st.text_area(
         "定投基金",
-        value=_cfg.get("funds_dca", ""),
+        value=_cfg.get("funds_dca", _cfg.get("funds", "")),
         height=100,
         label_visibility="collapsed",
+        key="fund_dca_text",
     )
 
     # 基金 B类（单笔）并入精确持仓
@@ -214,6 +218,7 @@ with st.sidebar:
         height=120,
         label_visibility="collapsed",
         help="基金、ETF、A股统一格式。第5列当前价可选，填入后跳过 API 拉取。",
+        key="stock_text",
     )
 
     st.divider()
@@ -224,6 +229,7 @@ with st.sidebar:
         "存款列表（每行：银行名,类型,余额,年化利率）",
         value=_cfg.get("deposits", "工商银行,活期,50000,0.002\n招商银行,定期,50000,0.020"),
         height=100,
+        key="dep_text",
     )
 
     st.divider()
