@@ -219,7 +219,7 @@ with st.sidebar:
     st.divider()
 
     # 存款
-    st.subheader("⑥ 银行存款")
+    st.subheader("⑤ 银行存款")
     dep_text = st.text_area(
         "存款列表（每行：银行名,类型,余额,年化利率）",
         value=_cfg.get("deposits", "工商银行,活期,50000,0.002\n招商银行,定期,50000,0.020"),
@@ -405,6 +405,7 @@ def parse_stocks(text):
 def parse_deposits(text):
     result = []
     for line in text.strip().splitlines():
+        line = line.replace("，", ",")
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 4:
             continue
