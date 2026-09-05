@@ -226,7 +226,7 @@ with st.sidebar:
     # 存款
     st.subheader("⑤ 银行存款")
     dep_text = st.text_area(
-        "存款列表（每行：银行名,类型,余额,年化利率）",
+        "存款列表（每行：银行名,类型,余额[,年化利率]）",
         value=_cfg.get("deposits", "工商银行,活期,50000,0.002\n招商银行,定期,50000,0.020"),
         height=100,
         key="dep_text",
@@ -413,12 +413,13 @@ def parse_deposits(text):
     for line in text.strip().splitlines():
         line = line.replace("，", ",")
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 4:
+        if len(parts) < 3:
             continue
         try:
             result.append({
                 "bank": parts[0], "type": parts[1],
-                "balance": float(parts[2]), "rate": float(parts[3]),
+                "balance": float(parts[2]),
+                "rate": float(parts[3]) if len(parts) > 3 and parts[3] else 0.0,
                 "term_years": 0,
             })
         except Exception:
@@ -428,7 +429,6 @@ def parse_deposits(text):
 fund_input_raw  = parse_fund_dca(fund_dca_text)   # A类：定投，总金额格式
 stock_input_raw = parse_stocks(stock_text)      # B类：单笔基金/ETF/A股，有买入日期
 dep_input_raw   = parse_deposits(dep_text)
-st.caption(f"🔍 存款调试 | dep_text前40字符=`{repr(dep_text[:40])}` | 解析行数={len(dep_input_raw)}")
 
 # ── 拉取行情 ──────────────────────────────────────────
 with st.spinner("正在拉取实时行情…"):
