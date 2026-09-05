@@ -122,8 +122,10 @@ with st.sidebar:
     discount_rate    = st.number_input("折现率", value=float(_g.get("discount_rate", 0.03)), step=0.005, format="%.3f")
     proj_invest_rate = st.number_input("退休推算投资年化", value=float(_g.get("proj_invest_rate", 0.05)),
                                        step=0.01, format="%.2f", help="保守3-4%，中性5-6%，激进7-8%")
-    date_retire   = st.date_input("预计退休日期",    value=_d(_g.get("date_retire"),   date(2040, 1, 1)))
-    date_life_end = st.date_input("预期寿命终止日",  value=_d(_g.get("date_life_end"), date(2080, 1, 1)))
+    date_retire        = st.date_input("预计退休日期",      value=_d(_g.get("date_retire"),        date(2040, 1, 1)))
+    date_pension_start = st.date_input("法定领养老金日期",  value=_d(_g.get("date_pension_start"), date(2043, 1, 1)),
+                                       help="达到法定退休年龄、开始领取养老金的日期。退休到领金之间为「过渡期」，需靠自有资产支撑。")
+    date_life_end      = st.date_input("预期寿命终止日",    value=_d(_g.get("date_life_end"),      date(2080, 1, 1)))
     date_base_1   = st.date_input("基期起始",        value=_d(_g.get("date_base_1"),   date(2020, 1, 1)))
     date_base_2   = st.date_input("对比节点",        value=_d(_g.get("date_base_2"),   date(2023, 1, 1)))
 
@@ -276,7 +278,8 @@ with st.sidebar:
     export_data = {
         "global": {
             "discount_rate": discount_rate, "proj_invest_rate": proj_invest_rate,
-            "date_retire": str(date_retire), "date_life_end": str(date_life_end),
+            "date_retire": str(date_retire), "date_pension_start": str(date_pension_start),
+            "date_life_end": str(date_life_end),
             "date_base_1": str(date_base_1), "date_base_2": str(date_base_2),
         },
         "pension": {
@@ -792,44 +795,73 @@ st.divider()
 # ── V3 退休建议 ────────────────────────────────────────────────────────────
 st.subheader("🎯 退休建议")
 
-_retire_target  = retire_expense_mo * 12 / 0.04
+# 两阶段目标
+_bridge_months  = max(int((date_pension_start - date_retire).days / 30), 0)
+_bridge_cost    = _bridge_months * retire_expense_mo          # 过渡期消耗（简化，未计利息）
+_pension_gap_mo = max(0.0, retire_expense_mo - pension_monthly)
+_phase2_target  = _pension_gap_mo * 12 / 0.04 if _pension_gap_mo > 0 else 0.0
+_retire_target  = _bridge_cost + _phase2_target
+
 _months_to_ret  = max(int((date_retire - today).days / 30), 1)
 _r_mo           = (1 + proj_invest_rate) ** (1 / 12) - 1
 
 # A. 情景结果文字判断
 st.markdown("**A. 情景结果判断**")
+
+# 目标构成说明
+_c1, _c2, _c3 = st.columns(3)
+_c1.metric("过渡期", f"{_bridge_months} 个月",
+           help=f"{date_retire} → {date_pension_start}，需靠自有资产支撑")
+_c2.metric("过渡期消耗", f"¥{_bridge_cost:,.0f}",
+           help=f"¥{retire_expense_mo:,.0f}/月 × {_bridge_months} 个月（简化，未计利息）")
+if _pension_gap_mo > 0:
+    _c3.metric("养老期补充目标", f"¥{_phase2_target:,.0f}",
+               help=f"养老金 ¥{pension_monthly:,.0f}/月 < 月支出，缺口 ¥{_pension_gap_mo:,.0f}/月，按 4% 法则折算")
+else:
+    _c3.metric("养老期补充目标", "¥0",
+               help=f"养老金 ¥{pension_monthly:,.0f}/月 ≥ 退休月支出 ¥{retire_expense_mo:,.0f}，养老期自给自足")
+
 st.caption(
-    f"4% 法则目标 = 退休月支出 ¥{retire_expense_mo:,} × 12 ÷ 4% = **¥{_retire_target:,.0f}**　｜　"
-    f"⚠️ 此目标未扣除养老金月领，偏保守；扣除后的调整目标见下方「养老金调整视角」"
+    f"退休总目标 = 过渡期消耗 ¥{_bridge_cost:,.0f} ＋ 养老期补充 ¥{_phase2_target:,.0f} = **¥{_retire_target:,.0f}**"
+    + ("　｜　⚠️ 养老金已覆盖养老期月支出，过渡期是唯一需解决的资金缺口" if _pension_gap_mo == 0 else "")
 )
+
 for _r in _results:
-    _gap    = _r["gap"]
     _total  = _r["total_2036"]
+    _liquid = _r["inv_cash"]
+    _gap    = max(0.0, _retire_target - _total)
     _cash_d = _r["cash_depl"]
     with st.expander(_r["name"], expanded=True):
         if _gap == 0:
             _margin = _total - _retire_target
             st.success(f"✅ 财务达标 — 退休总资产 ¥{_total:,.0f}，超出目标 ¥{_margin:,.0f}（安全边际 {_margin / _retire_target:.1%}）")
-            st.caption(f"计算：¥{_total:,.0f}（推算资产）− ¥{_retire_target:,.0f}（目标）= +¥{_margin:,.0f}")
+            st.caption(f"计算：¥{_total:,.0f}（退休资产）− ¥{_retire_target:,.0f}（目标）= +¥{_margin:,.0f}")
         else:
-            st.error(f"❌ 退休缺口 ¥{_gap:,.0f} — 退休总资产 ¥{_total:,.0f}，低于 4% 法则目标 ¥{_retire_target:,.0f}")
-            st.caption(f"计算：¥{_retire_target:,.0f}（目标）− ¥{_total:,.0f}（推算资产）= 缺口 ¥{_gap:,.0f}")
+            st.error(f"❌ 退休缺口 ¥{_gap:,.0f} — 退休总资产 ¥{_total:,.0f}，低于目标 ¥{_retire_target:,.0f}")
+            st.caption(f"计算：¥{_retire_target:,.0f}（目标）− ¥{_total:,.0f}（退休资产）= 缺口 ¥{_gap:,.0f}")
+        # 流动资产能否覆盖过渡期
+        if _bridge_months > 0:
+            if _liquid >= _bridge_cost:
+                st.caption(f"✅ 退休时流动资产 ¥{_liquid:,.0f} 可覆盖 {_bridge_months} 个月过渡期（需 ¥{_bridge_cost:,.0f}）")
+            else:
+                st.warning(f"⚠️ 退休时流动资产 ¥{_liquid:,.0f} 不足以覆盖过渡期消耗 ¥{_bridge_cost:,.0f}，"
+                           f"缺 ¥{_bridge_cost - _liquid:,.0f}，可能需提前解锁保险/公积金")
         if _cash_d is not None:
-            _cash_now  = sum(d["balance"] for d in dep_list)
-            _inv_now   = sum(f["market_value"] for f in fund_list) + sum(s["market_value"] for s in stock_list)
-            _liquid    = _cash_now + _inv_now
-            _liq_mo    = int(_liquid / monthly_expense) if monthly_expense else 0
+            _cash_now = sum(d["balance"] for d in dep_list)
+            _inv_now  = sum(f["market_value"] for f in fund_list) + sum(s["market_value"] for s in stock_list)
+            _liq_now  = _cash_now + _inv_now
+            _liq_mo   = int(_liq_now / monthly_expense) if monthly_expense else 0
             st.warning(
-                f"⚠️ 该情景下存款（¥{_cash_now:,.0f}）会先用完，之后从基金/股票变现继续支付生活费。\n\n"
-                f"可动用资产合计（存款 + 基金/股票）= **¥{_liquid:,.0f}**，"
-                f"零收入下约可支撑 **{_liq_mo} 个月**。"
+                f"⚠️ 该情景下存款会先用完，之后从基金/股票变现支付生活费。\n\n"
+                f"当前可动用资产 ¥{_liq_now:,.0f}，零收入下约可支撑 {_liq_mo} 个月。"
             )
         else:
             st.caption("存款始终为正，无需提前变现投资")
 
-_semi_r = _results[2]
-if _semi_r["gap"] > 0:
-    _extra_mo_semi = _semi_r["gap"] / max(_months_to_ret, 1)   # 简化线性：缺口÷月数
+_semi_r    = _results[2]
+_gap_semi  = max(0.0, _retire_target - _semi_r["total_2036"])
+if _gap_semi > 0:
+    _extra_mo_semi = _gap_semi / max(_months_to_ret, 1)
     _required_semi = semi_income + _extra_mo_semi
     if _required_semi > monthly_income * 1.5:
         st.warning(f"💡 半退休建议：窗口期仅 {_months_to_ret} 个月，需将半退休月收入提高至 ¥{_required_semi:,.0f}，"
@@ -840,7 +872,7 @@ if _semi_r["gap"] > 0:
 # B. 达标路径推算
 st.markdown("**B. 达标路径推算**")
 _cont_r   = _results[0]
-_gap_cont = _cont_r["gap"]
+_gap_cont = max(0.0, _retire_target - _cont_r["total_2036"])
 
 if _gap_cont == 0:
     _margin_cont = _cont_r["total_2036"] - _retire_target
@@ -850,7 +882,6 @@ else:
     st.warning(f"⚠️ 继续工作情景存在缺口 ¥{_gap_cont:,.0f}，以下两条路径可补足：")
     _col_a, _col_b = st.columns(2)
 
-    # 路径一：月额外储蓄（复利终值公式逆推）
     _extra_mo = (
         _gap_cont * _r_mo / ((1 + _r_mo) ** _months_to_ret - 1)
         if _r_mo > 0 else _gap_cont / _months_to_ret
@@ -864,7 +895,6 @@ else:
             st.metric("月额外储蓄法", f"¥{_extra_mo:,.0f}/月")
             st.caption(f"从现在起每月额外存入并以 {proj_invest_rate:.1%} 年化增值，至 {date_retire.year} 年可补足缺口")
 
-    # 路径二：推迟退休（简化线性估算）
     _monthly_savings = monthly_income - monthly_expense
     with _col_b:
         if _monthly_savings > 0 and _r_mo > 0:
