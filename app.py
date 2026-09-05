@@ -429,6 +429,7 @@ def parse_deposits(text):
 fund_input_raw  = parse_fund_dca(fund_dca_text)   # A类：定投，总金额格式
 stock_input_raw = parse_stocks(stock_text)      # B类：单笔基金/ETF/A股，有买入日期
 dep_input_raw   = parse_deposits(dep_text)
+st.caption(f"🔍 DEP DEBUG | 行数={len(dep_input_raw)} | raw={repr(dep_text[:60])}")
 
 # ── 拉取行情 ──────────────────────────────────────────
 with st.spinner("正在拉取实时行情…"):
