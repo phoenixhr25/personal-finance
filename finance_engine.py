@@ -85,9 +85,10 @@ def compute_insurance(ins_list, discount_rate):
 def compute_funds(fund_list, today):
     result = []
     for f in fund_list:
-        nav  = f.get("current_nav") or f["cost_nav"]
-        mv   = nav * f["shares"]
-        cost = f["cost_nav"] * f["shares"]
+        nav  = float(f.get("current_nav") or f["cost_nav"])
+        shares = float(f["shares"])
+        mv   = nav * shares
+        cost = float(f["cost_nav"]) * shares
         ret_pct = (mv - cost) / cost if cost else 0
         if f.get("buy_date"):
             hold = max((today - f["buy_date"]).days / 365.25, 0.001)
@@ -104,10 +105,11 @@ def compute_funds(fund_list, today):
 def compute_stocks(stock_list, today):
     result = []
     for s in stock_list:
-        price = s.get("current_price") or s["cost_price"]
+        price  = float(s.get("current_price") or s["cost_price"])
+        shares = float(s["shares"])
         hold  = max((today - s["buy_date"]).days / 365.25, 0.001)
-        mv    = price * s["shares"]
-        cost  = s["cost_price"] * s["shares"]
+        mv    = price * shares
+        cost  = float(s["cost_price"]) * shares
         result.append({**s, "current_price": price, "market_value": mv, "cost_basis": cost,
                        "total_return": mv - cost,
                        "return_pct": (mv - cost) / cost if cost else 0,
