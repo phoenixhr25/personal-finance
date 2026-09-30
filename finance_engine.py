@@ -19,15 +19,22 @@ def pv_lump(fv, rate_annual, years):
 
 
 def eaa(npv, rate, years):
-    if years <= 0 or rate == 0:
+    if years <= 0:
         return npv
+    if rate == 0:
+        return npv / years
     pvifa = (1 - (1 + rate) ** (-years)) / rate
     return npv / pvifa
+
+
+MIN_ANNUALIZE_YEARS = 1 / 12
 
 
 def annualized_return(mv, cost, years):
     if years <= 0 or cost <= 0:
         return 0.0
+    if years < MIN_ANNUALIZE_YEARS:
+        return mv / cost - 1   # 持有不足一个月：年化会被放大到失真，退化为总收益率
     return (mv / cost) ** (1 / years) - 1
 
 
@@ -52,9 +59,19 @@ def auto_monthly_pension(personal_account, account_rate, years_to_retire,
     return basic + personal_part
 
 
-def compute_pension(params, discount_rate, date_retire, date_life_end, today):
-    delay_m   = (date_retire - today).days // 30
-    receive_m = (date_life_end - date_retire).days // 30
+def months_between(d1, d2):
+    """d1 到 d2 的整日历月数（不足一个月的零头舍去），d2 早于 d1 时为 0"""
+    m = (d2.year - d1.year) * 12 + (d2.month - d1.month)
+    if d2.day < d1.day:
+        m -= 1
+    return max(m, 0)
+
+
+def compute_pension(params, discount_rate, date_pension_start, date_life_end, today):
+    """date_pension_start 是开始领养老金的日期（不是退休日，过渡期没有养老金）"""
+    start     = max(date_pension_start, today)
+    delay_m   = months_between(today, start)
+    receive_m = months_between(start, date_life_end)
     npv = pv_annuity(params["monthly_pension"], discount_rate, receive_m, delay_months=delay_m)
     return {**params, "npv": npv, "annualized_return": params["account_annual_return"],
             "delay_m": delay_m, "receive_m": receive_m}
@@ -72,11 +89,16 @@ def compute_insurance(ins_list, discount_rate):
     for ins in ins_list:
         pv_mat = pv_lump(ins["maturity_value"], discount_rate, ins["years_to_maturity"])
         pv_prem = 0.0
-        if ins["premium_years_left"] > 0 and discount_rate > 0:
-            pvifa = (1 - (1 + discount_rate) ** (-ins["premium_years_left"])) / discount_rate
-            pv_prem = ins["annual_premium"] * pvifa
+        n = ins["premium_years_left"]
+        if n > 0:
+            if discount_rate == 0:
+                pv_prem = ins["annual_premium"] * n
+            else:
+                pvifa = (1 - (1 + discount_rate) ** (-n)) / discount_rate
+                pv_prem = ins["annual_premium"] * pvifa
+        # 持有到期只拿满期金，现金价值是退保才拿的钱，两者不能相加
         result.append({**ins, "pv_maturity": pv_mat, "pv_premiums": pv_prem,
-                       "npv": ins["cash_value"] + pv_mat - pv_prem,
+                       "npv": pv_mat - pv_prem,
                        "annualized_return": ins["policy_irr"],
                        "market_value": ins["cash_value"], "cost_basis": ins["cost_basis"]})
     return result

@@ -18,6 +18,7 @@ from finance_engine import (
     _sim_params, run_scenario, run_stress,
 )
 from market_api import fetch_fund_prices, fetch_stock_prices
+from config_io import ConfigError, MAX_FILE_BYTES, bounds, validate_config, wrap_export
 
 # ── 字体 ──────────────────────────────────────────────────────────────────
 import os, glob as _glob
@@ -64,6 +65,59 @@ def _d(s, default):
     except Exception:
         return default
 
+def _ratio(a, b):
+    """除法保护：分母为 0 时返回 0，避免退休支出填 0 等情形导致页面崩溃。"""
+    return a / b if b else 0.0
+
+
+RATE_HELP = "填小数：3% 填 0.03"
+
+
+def _bd(section, key):
+    """数值输入框的上下限，与导入校验一致，防止手动输入离谱数值导致计算溢出。"""
+    lo, hi = bounds(section, key)
+    return {"min_value": lo, "max_value": hi}
+
+
+def _apply_config(cfg):
+    """把已校验的配置一次性写入界面状态。缺失项使用各自的缺省值。"""
+    st.session_state["_cfg"] = cfg
+    _lh  = cfg.get("hpf", {})
+    _lsn = cfg.get("snapshots", {})
+    _lin = cfg.get("insurance", [])
+    st.session_state["hpf_bal"]  = float(_lh.get("balance", 80_000))
+    st.session_state["b1ph"]  = float(_lsn.get("b1_ph",  50_000))
+    st.session_state["b1ins"] = float(_lsn.get("b1_ins", 10_000))
+    st.session_state["b1inv"] = float(_lsn.get("b1_inv", 30_000))
+    st.session_state["b1csh"] = float(_lsn.get("b1_csh", 50_000))
+    st.session_state["b2ph"]  = float(_lsn.get("b2_ph",  120_000))
+    st.session_state["b2ins"] = float(_lsn.get("b2_ins",  30_000))
+    st.session_state["b2inv"] = float(_lsn.get("b2_inv", 100_000))
+    st.session_state["b2csh"] = float(_lsn.get("b2_csh", 100_000))
+    for i, ins in enumerate(_lin):
+        st.session_state[f"ins_name_{i}"] = ins.get("name", f"储蓄险{i+1}")
+        st.session_state[f"ins_cv_{i}"]   = float(ins.get("cash_value", 50_000))
+        st.session_state[f"ins_cost_{i}"] = float(ins.get("cost_basis", 50_000))
+        st.session_state[f"ins_prem_{i}"] = float(ins.get("annual_premium", 0))
+        st.session_state[f"ins_left_{i}"] = int(ins.get("premium_years_left", 0))
+        st.session_state[f"ins_mat_{i}"]  = float(ins.get("maturity_value", 50_000))
+        st.session_state[f"ins_yrs_{i}"]  = int(ins.get("years_to_maturity", 0))
+        st.session_state[f"ins_irr_{i}"]  = float(ins.get("policy_irr", 0.030))
+    st.session_state["fund_dca_text"] = cfg.get("funds_dca", "")
+    st.session_state["stock_text"]    = cfg.get("stocks", "")
+    st.session_state["dep_text"]      = cfg.get("deposits", "")
+
+
+def _confirm_import():
+    _cfg_new, _ = st.session_state.pop("_pending_cfg")
+    _apply_config(_cfg_new)
+    st.session_state["_import_ok"] = True
+
+
+def _cancel_import():
+    st.session_state.pop("_pending_cfg", None)
+
+
 # ═══════════════════════════════════════════════════════
 # 侧边栏：参数输入
 # ═══════════════════════════════════════════════════════
@@ -73,39 +127,40 @@ with st.sidebar:
     # ── 导入配置 ──────────────────────────────────────
     st.subheader("💾 配置文件")
     uploaded = st.file_uploader("导入 JSON 配置", type=["json"], label_visibility="collapsed")
-    if uploaded is not None:
-        if st.session_state.get("_upload_id") != uploaded.file_id:
+    if uploaded is not None and st.session_state.get("_upload_id") != uploaded.file_id:
+        # 守卫放在最前：同一个文件在重新运行时不会被重复处理
+        st.session_state["_upload_id"] = uploaded.file_id
+        st.session_state.pop("_pending_cfg", None)
+        st.session_state["_import_error"] = None
+        try:
+            _bytes = uploaded.getvalue()
+            if len(_bytes) > MAX_FILE_BYTES:
+                raise ConfigError([f"文件过大（{len(_bytes) // 1024} KB），配置文件通常不足 10 KB"])
             try:
-                _loaded = _json.load(uploaded)
-                st.session_state["_cfg"]       = _loaded
-                st.session_state["_upload_id"] = uploaded.file_id
-                _lh  = _loaded.get("hpf", {})
-                _lsn = _loaded.get("snapshots", {})
-                _lin = _loaded.get("insurance", [])
-                st.session_state["hpf_bal"]  = float(_lh.get("balance", 80_000))
-                st.session_state["b1ph"]  = float(_lsn.get("b1_ph",  50_000))
-                st.session_state["b1ins"] = float(_lsn.get("b1_ins", 10_000))
-                st.session_state["b1inv"] = float(_lsn.get("b1_inv", 30_000))
-                st.session_state["b1csh"] = float(_lsn.get("b1_csh", 50_000))
-                st.session_state["b2ph"]  = float(_lsn.get("b2_ph",  120_000))
-                st.session_state["b2ins"] = float(_lsn.get("b2_ins",  30_000))
-                st.session_state["b2inv"] = float(_lsn.get("b2_inv", 100_000))
-                st.session_state["b2csh"] = float(_lsn.get("b2_csh", 100_000))
-                for i, ins in enumerate(_lin):
-                    st.session_state[f"ins_name_{i}"] = ins.get("name", f"储蓄险{i+1}")
-                    st.session_state[f"ins_cv_{i}"]   = float(ins.get("cash_value", 50_000))
-                    st.session_state[f"ins_cost_{i}"] = float(ins.get("cost_basis", 50_000))
-                    st.session_state[f"ins_prem_{i}"] = float(ins.get("annual_premium", 0))
-                    st.session_state[f"ins_left_{i}"] = int(ins.get("premium_years_left", 0))
-                    st.session_state[f"ins_mat_{i}"]  = float(ins.get("maturity_value", 50_000))
-                    st.session_state[f"ins_yrs_{i}"]  = int(ins.get("years_to_maturity", 0))
-                    st.session_state[f"ins_irr_{i}"]  = float(ins.get("policy_irr", 0.030))
-                st.session_state["fund_dca_text"] = _loaded.get("funds_dca", _loaded.get("funds", ""))
-                st.session_state["stock_text"]    = _loaded.get("stocks", "")
-                st.session_state["dep_text"]      = _loaded.get("deposits", "")
-                st.success("配置已加载")
-            except Exception as e:
-                st.error(f"JSON 解析失败：{e}")
+                _raw = _json.loads(_bytes.decode("utf-8-sig"))
+            except (UnicodeDecodeError, ValueError) as e:
+                raise ConfigError([f"文件不是有效的 JSON：{e}"])
+            st.session_state["_pending_cfg"] = validate_config(_raw)
+        except ConfigError as e:
+            st.session_state["_import_error"] = e.problems
+
+    if st.session_state.get("_import_error"):
+        st.error("配置未导入，当前参数保持不变：\n\n" +
+                 "\n".join(f"- {p}" for p in st.session_state["_import_error"][:8]))
+
+    if st.session_state.pop("_import_ok", False):
+        st.success("配置已加载")
+
+    if st.session_state.get("_pending_cfg"):
+        _pend, _warns = st.session_state["_pending_cfg"]
+        st.warning("配置文件校验通过。确认后将覆盖当前全部参数，建议先导出当前配置。")
+        for _w in _warns:
+            st.caption(f"· {_w}")
+        _c1, _c2 = st.columns(2)
+        _c1.button("确认覆盖", key="import_confirm", type="primary",
+                   use_container_width=True, on_click=_confirm_import)
+        _c2.button("取消", key="import_cancel", use_container_width=True,
+                   on_click=_cancel_import)
 
     _cfg = st.session_state.get("_cfg", {})
     _g   = _cfg.get("global", {})
@@ -119,9 +174,9 @@ with st.sidebar:
 
     # 全局
     st.subheader("全局参数")
-    discount_rate    = st.number_input("折现率", value=float(_g.get("discount_rate", 0.03)), step=0.005, format="%.3f")
+    discount_rate    = st.number_input("折现率", value=float(_g.get("discount_rate", 0.03)), step=0.005, format="%.3f", help=RATE_HELP, **_bd("global", "discount_rate"))
     proj_invest_rate = st.number_input("退休推算投资年化", value=float(_g.get("proj_invest_rate", 0.05)),
-                                       step=0.01, format="%.2f", help="保守3-4%，中性5-6%，激进7-8%")
+                                       step=0.01, format="%.2f", help="填小数：5% 填 0.05。保守3-4%，中性5-6%，激进7-8%", **_bd("global", "proj_invest_rate"))
     date_retire        = st.date_input("预计退休日期",      value=_d(_g.get("date_retire"),        date(2040, 1, 1)))
     date_pension_start = st.date_input("法定领养老金日期",  value=_d(_g.get("date_pension_start"), date(2043, 1, 1)),
                                        help="达到法定退休年龄、开始领取养老金的日期。退休到领金之间为「过渡期」，需靠自有资产支撑。")
@@ -133,8 +188,8 @@ with st.sidebar:
 
     # 养老
     st.subheader("① 养老保险")
-    pension_account = st.number_input("个人账户余额", value=float(_p.get("account", 100_000)), step=1000.0)
-    pension_rate    = st.number_input("账户年化利率", value=float(_p.get("rate", 0.055)), step=0.001, format="%.3f")
+    pension_account = st.number_input("个人账户余额", value=float(_p.get("account", 100_000)), step=1000.0, **_bd("pension", "account"))
+    pension_rate    = st.number_input("账户年化利率", value=float(_p.get("rate", 0.055)), step=0.001, format="%.3f", help=RATE_HELP, **_bd("pension", "rate"))
 
     pension_auto = st.toggle("按城职保公式自动推算月领金额", value=bool(_p.get("auto", True)))
 
@@ -148,33 +203,33 @@ with st.sidebar:
                                    index=list(CITY_WAGES.keys()).index(_p.get("city", "深圳"))
                                          if _p.get("city") in CITY_WAGES else 0)
         if city_choice == "其他（手动输入）":
-            city_avg_wage = st.number_input("城市月社平工资（元）", value=float(_p.get("city_wage", 8000)), step=100.0)
+            city_avg_wage = st.number_input("城市月社平工资（元）", value=float(_p.get("city_wage", 8000)), step=100.0, **_bd("pension", "city_wage"))
         else:
             city_avg_wage = float(CITY_WAGES[city_choice])
             st.caption(f"参考社平工资：¥{city_avg_wage:,.0f}/月（非私营单位均薪，数据可能已过时，建议自查当地社保局官网后选「其他」手动输入）")
 
-        wage_growth   = st.number_input("社平工资年增长率", value=float(_p.get("wage_growth", 0.04)), step=0.005, format="%.3f")
-        contrib_years = st.number_input("预计缴费年限（年）", value=int(_p.get("contrib_years", 20)), step=1)
+        wage_growth   = st.number_input("社平工资年增长率", value=float(_p.get("wage_growth", 0.04)), step=0.005, format="%.3f", help=RATE_HELP, **_bd("pension", "wage_growth"))
+        contrib_years = st.number_input("预计缴费年限（年）", value=int(_p.get("contrib_years", 20)), step=1, **_bd("pension", "contrib_years"))
         contrib_index = st.number_input("缴费指数", value=float(_p.get("contrib_index", 1.0)), step=0.05, format="%.2f",
-                                        help="缴费基数 / 社平工资，一般在 0.6～3 之间，按社平工资缴纳填 1.0")
+                                        help="缴费基数 / 社平工资，一般在 0.6～3 之间，按社平工资缴纳填 1.0", **_bd("pension", "contrib_index"))
         retire_age    = st.selectbox("退休年龄", [50, 55, 60, 65],
                                      index=[50,55,60,65].index(int(_p.get("retire_age", 60))))
-        y_to_retire_pension = (date_retire - date.today()).days / 365.25
+        y_to_retire_pension = (date_pension_start - date.today()).days / 365.25
         pension_monthly = auto_monthly_pension(
             pension_account, pension_rate, y_to_retire_pension,
             city_avg_wage, wage_growth, contrib_years, contrib_index, retire_age,
         )
-        st.info(f"推算月领金额：**¥{pension_monthly:,.0f}**（退休时，含基础养老金+个人账户养老金）")
+        st.info(f"推算月领金额：**¥{pension_monthly:,.0f}**（开始领取时，含基础养老金+个人账户养老金）")
     else:
-        pension_monthly = st.number_input("预计月领金额（手动填写）", value=float(_p.get("monthly", 3_000)), step=100.0)
+        pension_monthly = st.number_input("预计月领金额（手动填写）", value=float(_p.get("monthly", 3_000)), step=100.0, **_bd("pension", "monthly"))
         city_choice = city_avg_wage = wage_growth = contrib_years = contrib_index = retire_age = None
 
     st.divider()
 
     # 公积金
     st.subheader("② 住房公积金")
-    hpf_balance = st.number_input("当前余额",       value=float(_h.get("balance", 80_000)), step=1000.0, key="hpf_bal")
-    hpf_years   = st.number_input("预计几年后动用", value=float(_h.get("years", 10)), step=1.0)
+    hpf_balance = st.number_input("当前余额",       value=float(_h.get("balance", 80_000)), step=1000.0, key="hpf_bal", **_bd("hpf", "balance"))
+    hpf_years   = st.number_input("预计几年后动用", value=float(_h.get("years", 10)), step=1.0, **_bd("hpf", "years"))
 
     st.divider()
 
@@ -188,13 +243,13 @@ with st.sidebar:
         with st.expander(f"保单 {i+1}", expanded=(i == 0)):
             ins_inputs.append({
                 "name":               st.text_input("保单名称",  value=saved.get("name", f"储蓄险{i+1}"), key=f"ins_name_{i}"),
-                "cash_value":         st.number_input("现金价值", value=float(saved.get("cash_value", 50_000)), key=f"ins_cv_{i}"),
-                "cost_basis":         st.number_input("已缴保费", value=float(saved.get("cost_basis", 50_000)), key=f"ins_cost_{i}"),
-                "annual_premium":     st.number_input("年缴保费", value=float(saved.get("annual_premium", 0)), key=f"ins_prem_{i}"),
-                "premium_years_left": st.number_input("还需缴年", value=int(saved.get("premium_years_left", 0)), key=f"ins_left_{i}"),
-                "maturity_value":     st.number_input("满期金额", value=float(saved.get("maturity_value", 50_000)), key=f"ins_mat_{i}"),
-                "years_to_maturity":  st.number_input("距满期年", value=int(saved.get("years_to_maturity", 0)), key=f"ins_yrs_{i}"),
-                "policy_irr":         st.number_input("保单 IRR", value=float(saved.get("policy_irr", 0.030)), format="%.3f", key=f"ins_irr_{i}"),
+                "cash_value":         st.number_input("现金价值", value=float(saved.get("cash_value", 50_000)), key=f"ins_cv_{i}", **_bd("insurance", "cash_value")),
+                "cost_basis":         st.number_input("已缴保费", value=float(saved.get("cost_basis", 50_000)), key=f"ins_cost_{i}", **_bd("insurance", "cost_basis")),
+                "annual_premium":     st.number_input("年缴保费", value=float(saved.get("annual_premium", 0)), key=f"ins_prem_{i}", **_bd("insurance", "annual_premium")),
+                "premium_years_left": st.number_input("还需缴年", value=int(saved.get("premium_years_left", 0)), key=f"ins_left_{i}", **_bd("insurance", "premium_years_left")),
+                "maturity_value":     st.number_input("满期金额", value=float(saved.get("maturity_value", 50_000)), key=f"ins_mat_{i}", **_bd("insurance", "maturity_value")),
+                "years_to_maturity":  st.number_input("距满期年", value=int(saved.get("years_to_maturity", 0)), key=f"ins_yrs_{i}", **_bd("insurance", "years_to_maturity")),
+                "policy_irr":         st.number_input("保单 IRR", value=float(saved.get("policy_irr", 0.030)), format="%.3f", key=f"ins_irr_{i}", help=RATE_HELP, **_bd("insurance", "policy_irr")),
             })
 
     st.divider()
@@ -241,26 +296,26 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         st.caption("基期起始")
-        b1_ph  = st.number_input("养老+公积金", value=float(_sn.get("b1_ph",  50_000)), key="b1ph")
-        b1_ins = st.number_input("储蓄险",      value=float(_sn.get("b1_ins", 10_000)), key="b1ins")
-        b1_inv = st.number_input("投资",         value=float(_sn.get("b1_inv", 30_000)), key="b1inv")
-        b1_csh = st.number_input("现金",         value=float(_sn.get("b1_csh", 50_000)), key="b1csh")
+        b1_ph  = st.number_input("养老+公积金", value=float(_sn.get("b1_ph",  50_000)), key="b1ph", **_bd("snapshots", "b1_ph"))
+        b1_ins = st.number_input("储蓄险",      value=float(_sn.get("b1_ins", 10_000)), key="b1ins", **_bd("snapshots", "b1_ins"))
+        b1_inv = st.number_input("投资",         value=float(_sn.get("b1_inv", 30_000)), key="b1inv", **_bd("snapshots", "b1_inv"))
+        b1_csh = st.number_input("现金",         value=float(_sn.get("b1_csh", 50_000)), key="b1csh", **_bd("snapshots", "b1_csh"))
     with col2:
         st.caption("对比节点")
-        b2_ph  = st.number_input("养老+公积金", value=float(_sn.get("b2_ph",  120_000)), key="b2ph")
-        b2_ins = st.number_input("储蓄险",      value=float(_sn.get("b2_ins",  30_000)), key="b2ins")
-        b2_inv = st.number_input("投资",         value=float(_sn.get("b2_inv", 100_000)), key="b2inv")
-        b2_csh = st.number_input("现金",         value=float(_sn.get("b2_csh", 100_000)), key="b2csh")
+        b2_ph  = st.number_input("养老+公积金", value=float(_sn.get("b2_ph",  120_000)), key="b2ph", **_bd("snapshots", "b2_ph"))
+        b2_ins = st.number_input("储蓄险",      value=float(_sn.get("b2_ins",  30_000)), key="b2ins", **_bd("snapshots", "b2_ins"))
+        b2_inv = st.number_input("投资",         value=float(_sn.get("b2_inv", 100_000)), key="b2inv", **_bd("snapshots", "b2_inv"))
+        b2_csh = st.number_input("现金",         value=float(_sn.get("b2_csh", 100_000)), key="b2csh", **_bd("snapshots", "b2_csh"))
 
     st.divider()
 
     # ── 情景模拟参数 ───────────────────────────────────
     st.subheader("情景模拟参数")
-    monthly_income         = st.number_input("月税后收入（元）",     value=float(_sm.get("monthly_income",    19_000)), step=500.0)
-    monthly_expense        = st.number_input("月总支出（元）",       value=float(_sm.get("monthly_expense",   11_000)), step=500.0)
-    retire_expense_mo      = st.number_input("退休月支出（元）",     value=float(_sm.get("retire_expense_mo",  8_000)), step=500.0)
-    semi_income            = st.number_input("半退休月收入（元）",   value=float(_sm.get("semi_income",       10_000)), step=500.0)
-    income_interrupt_months = st.number_input("收入中断月数",        value=int(_sm.get("income_interrupt_months", 12)),  step=1, min_value=1)
+    monthly_income         = st.number_input("月税后收入（元）",     value=float(_sm.get("monthly_income",    19_000)), step=500.0, **_bd("sim", "monthly_income"))
+    monthly_expense        = st.number_input("月总支出（元）",       value=float(_sm.get("monthly_expense",   11_000)), step=500.0, **_bd("sim", "monthly_expense"))
+    retire_expense_mo      = st.number_input("退休月支出（元）",     value=float(_sm.get("retire_expense_mo",  8_000)), step=500.0, **_bd("sim", "retire_expense_mo"))
+    semi_income            = st.number_input("半退休月收入（元）",   value=float(_sm.get("semi_income",       10_000)), step=500.0, **_bd("sim", "semi_income"))
+    income_interrupt_months = st.number_input("收入中断月数",        value=int(_sm.get("income_interrupt_months", 12)),  step=1, **_bd("sim", "income_interrupt_months"))
 
     st.divider()
 
@@ -307,7 +362,7 @@ with st.sidebar:
     }
     st.download_button(
         "💾 导出配置",
-        data=_json.dumps(export_data, ensure_ascii=False, indent=2),
+        data=_json.dumps(wrap_export(export_data), ensure_ascii=False, indent=2),
         file_name="finance_config.json",
         mime="application/json",
         use_container_width=True,
@@ -463,7 +518,7 @@ hpf_params = {
     "annual_rate": 0.025, "expected_use_years": hpf_years, "note": "",
 }
 
-pension  = compute_pension(pension_params, discount_rate, date_retire, date_life_end, today)
+pension  = compute_pension(pension_params, discount_rate, date_pension_start, date_life_end, today)
 hpf      = compute_hpf(hpf_params, discount_rate)
 ins_list = compute_insurance(ins_inputs, discount_rate)
 fund_list   = compute_funds(fund_input, today)
@@ -685,7 +740,7 @@ st.dataframe(_adj_df, hide_index=True, use_container_width=True)
 if _gap_mo == 0:
     st.success(f"养老金 ¥{_pension_mo:,.0f}/月 已超过退休支出，投资组合为纯额外缓冲。")
 else:
-    st.info(f"养老金覆盖退休支出的 {_pension_mo/retire_expense_mo:.0%}，缺口 ¥{_gap_mo:,.0f}/月需投资组合补足。")
+    st.info(f"养老金覆盖退休支出的 {_ratio(_pension_mo, retire_expense_mo):.0%}，缺口 ¥{_gap_mo:,.0f}/月需投资组合补足。")
 
 # ── 压力测试 ──────────────────────────────────────────
 st.subheader("压力测试")
@@ -834,7 +889,7 @@ for _r in _results:
     with st.expander(_r["name"], expanded=True):
         if _gap == 0:
             _margin = _total - _retire_target
-            st.success(f"✅ 财务达标 — 退休总资产 ¥{_total:,.0f}，超出目标 ¥{_margin:,.0f}（安全边际 {_margin / _retire_target:.1%}）")
+            st.success(f"✅ 财务达标 — 退休总资产 ¥{_total:,.0f}，超出目标 ¥{_margin:,.0f}（安全边际 {_ratio(_margin, _retire_target):.1%}）")
             st.caption(f"计算：¥{_total:,.0f}（退休资产）− ¥{_retire_target:,.0f}（目标）= +¥{_margin:,.0f}")
         else:
             st.error(f"❌ 退休缺口 ¥{_gap:,.0f} — 退休总资产 ¥{_total:,.0f}，低于目标 ¥{_retire_target:,.0f}")
@@ -876,7 +931,7 @@ _gap_cont = max(0.0, _retire_target - _cont_r["total_2036"])
 
 if _gap_cont == 0:
     _margin_cont = _cont_r["total_2036"] - _retire_target
-    st.success(f"✅ 继续工作情景已达标，安全边际 ¥{_margin_cont:,.0f}（{_margin_cont / _retire_target:.1%}）")
+    st.success(f"✅ 继续工作情景已达标，安全边际 ¥{_margin_cont:,.0f}（{_ratio(_margin_cont, _retire_target):.1%}）")
     st.caption("当前财务路径充裕，无需额外储蓄或推迟退休。")
 else:
     st.warning(f"⚠️ 继续工作情景存在缺口 ¥{_gap_cont:,.0f}，以下两条路径可补足：")
