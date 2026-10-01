@@ -246,9 +246,12 @@ def retirement_projection(snap_now, proj_invest_rate, ins_list, y_to_retire):
 
 def _sim_params(pension, hpf, ins_list, fund_list, stock_list, dep_list,
                 monthly_income, monthly_expense, retire_expense_mo,
-                proj_invest_rate, today, date_retire):
+                proj_invest_rate, today, date_retire, inflation=0.0):
+    """inflation：把退休时的名义资产折回今日购买力，与按今天物价填写的支出、目标比较"""
     ins_irr = sum(i["policy_irr"] for i in ins_list) / max(len(ins_list), 1)
+    years = max((date_retire - today).days / 365.25, 0)
     return dict(
+        deflator      = (1 + inflation) ** years,
         cash          = sum(d["balance"]       for d in dep_list),
         investment    = sum(f["market_value"]  for f in fund_list)
                       + sum(s["market_value"]  for s in stock_list),
@@ -304,13 +307,15 @@ def run_scenario(name, income_schedule, p):
 
     total    = pension_bal + hpf_bal + ins_val + investment + cash
     inv_cash = investment + cash
+    defl     = p.get("deflator", 1.0)
     target   = p["retire_expense_mo"] * 12 / 0.04
     return dict(name=name, cash_depl=cash_depl,
                 pension_2036=pension_bal, hpf_2036=hpf_bal,
                 ins_2036=ins_val, invest_2036=investment,
                 cash_2036=cash, total_2036=total,
                 inv_cash=inv_cash,
-                gap=max(0.0, target - total))
+                total_real=total / defl, inv_cash_real=inv_cash / defl,
+                gap=max(0.0, target - total / defl))
 
 
 def run_stress(label, p, investment_shock=1.0, inflation=0.0,
@@ -351,11 +356,14 @@ def run_stress(label, p, investment_shock=1.0, inflation=0.0,
 
     total    = pension_bal + hpf_bal + ins_val + investment + cash
     inv_cash = investment + cash
+    defl     = p.get("deflator", 1.0)
+    inv_real = inv_cash / defl
     eff_pension = p["monthly_pension"] * pension_mult
     gap_mo      = max(0.0, p["retire_expense_mo"] - eff_pension)
     target_adj  = gap_mo * 12 / 0.04
     return dict(label=label, total_2036=total, inv_cash=inv_cash,
+                total_real=total / defl, inv_cash_real=inv_real,
                 cash_depl=cash_depl,
                 target_adj=target_adj,
-                gap_adj=max(0.0, target_adj - inv_cash),
-                coverage=inv_cash / target_adj if target_adj > 0 else float("inf"))
+                gap_adj=max(0.0, target_adj - inv_real),
+                coverage=inv_real / target_adj if target_adj > 0 else float("inf"))

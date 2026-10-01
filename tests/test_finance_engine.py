@@ -246,3 +246,33 @@ def test_sim_params_prefers_real_pension():
                "monthly_pension_real": 7000}
     p = fe._sim_params(pension, {"balance": 0, "annual_rate": 0}, [], [], [], [], 0, 0, 0, 0.03, TODAY, TODAY)
     assert p["monthly_pension"] == 7000
+
+
+# ---------- 名义值折回今日购买力 ----------
+
+def _sp(inflation, years=10):
+    pension = {"personal_account": 0, "account_annual_return": 0, "monthly_pension": 0}
+    deps = [{"balance": 1_000_000.0}]
+    retire = date(TODAY.year + years, TODAY.month, TODAY.day)
+    return fe._sim_params(pension, {"balance": 0, "annual_rate": 0}, [], [], [], deps,
+                          0, 0, 4000, 0.0, TODAY, retire, inflation=inflation)
+
+
+def test_deflator_default_is_one():
+    assert _sp(0.0)["deflator"] == pytest.approx(1.0)
+
+
+def test_scenario_gap_uses_real_total():
+    # 名义 100 万，10 年 2.5% 通胀折回约 78 万；目标 4000×300 = 120 万
+    p = _sp(0.025)
+    r = fe.run_scenario("x", [], p)
+    assert r["total_2036"] == pytest.approx(1_000_000)
+    assert r["total_real"] == pytest.approx(1_000_000 / p["deflator"])
+    assert r["gap"] == pytest.approx(1_200_000 - r["total_real"])
+
+
+def test_stress_coverage_uses_real_investable():
+    p = _sp(0.025)
+    t = fe.run_stress("x", p)
+    assert t["coverage"] == pytest.approx(t["inv_cash_real"] / t["target_adj"])
+    assert t["inv_cash_real"] == pytest.approx(t["inv_cash"] / p["deflator"])
