@@ -234,3 +234,32 @@ def test_discount_rate_upper_bound_blocks_overflow_inputs():
     cfg["global"]["discount_rate"] = 999
     with pytest.raises(ConfigError, match="discount_rate"):
         validate_config(cfg)
+
+
+def test_v1_retire_age_65_migrates_to_60():
+    cfg = sample_export()
+    cfg["pension"]["retire_age"] = 65
+    cfg = {"format": "personal-finance-config", "schema_version": 1, **cfg}
+    clean, notes = validate_config(cfg)
+    assert clean["pension"]["retire_age"] == 60
+    assert any("65" in n for n in notes)
+
+
+def test_v2_fields_roundtrip():
+    cfg = wrap_export(sample_export())
+    assert cfg["schema_version"] == 2
+    cfg["global"]["inflation"] = 0.025
+    cfg["pension"]["birth"] = "1984-07-01"
+    cfg["pension"]["contrib_end"] = "2036-01-01"
+    clean, _ = validate_config(cfg)
+    assert clean["global"]["inflation"] == 0.025
+    assert clean["pension"]["birth"] == "1984-07-01"
+
+
+def test_v2_rejects_65_and_bad_inflation():
+    cfg = wrap_export(sample_export())
+    cfg["pension"]["retire_age"] = 65
+    cfg["global"]["inflation"] = 0.5
+    with pytest.raises(ConfigError) as e:
+        validate_config(cfg)
+    assert len(e.value.problems) == 2

@@ -44,18 +44,57 @@ def cagr(v0, v1, years):
     return (v1 / v0) ** (1 / years) - 1
 
 
-DISTRIBUTION_MONTHS = {50: 195, 55: 170, 60: 139, 65: 101}
+# 个人账户养老金计发月数（国发〔2005〕38 号附件），键为退休时的满周岁年龄
+ANNUITY_MONTHS = {
+    40: 233, 41: 230, 42: 226, 43: 223, 44: 220, 45: 216, 46: 212, 47: 208,
+    48: 204, 49: 199, 50: 195, 51: 190, 52: 185, 53: 180, 54: 175, 55: 170,
+    56: 164, 57: 158, 58: 152, 59: 145, 60: 139, 61: 132, 62: 125, 63: 117,
+    64: 109, 65: 101, 66: 93, 67: 84, 68: 75, 69: 65, 70: 56,
+}
+DISTRIBUTION_MONTHS = {a: ANNUITY_MONTHS[a] for a in (50, 55, 60, 65)}
+
+
+def annuity_months(age_years):
+    """计发月数。非整岁按满周岁取值（全国尚无统一的按月口径，取整最保守）"""
+    return ANNUITY_MONTHS[min(70, max(40, int(age_years)))]
+
+
+# 渐进式延迟退休（2025-01-01 起）：原法定年龄 -> (每几个月延迟 1 个月, 最多延迟月数)
+DELAY_RULES = {60: (4, 36), 55: (4, 36), 50: (2, 60)}
+REFORM_START = date(2025, 1, 1)
+
+
+def statutory_retirement(birth, orig_age):
+    """按出生年月和原法定退休年龄推算改革后的法定退休年龄（月）和退休年月（当月 1 日）"""
+    step, cap = DELAY_RULES[orig_age]
+    orig_idx = birth.year * 12 + birth.month - 1 + orig_age * 12
+    m = orig_idx - (REFORM_START.year * 12 + REFORM_START.month - 1)
+    delay = 0 if m < 0 else min(m // step + 1, cap)
+    idx = orig_idx + delay
+    return orig_age * 12 + delay, date(idx // 12, idx % 12 + 1, 1)
+
 
 def auto_monthly_pension(personal_account, account_rate, years_to_retire,
                           city_avg_wage, wage_growth_rate,
                           contribution_years, contribution_index,
-                          retire_age=60):
-    """按城镇职工基本养老保险公式推算月领金额"""
+                          retire_age=60, contrib_months=0, base_growth_years=None):
+    """按城镇职工基本养老保险公式推算领取当年的名义月领金额
+
+    retire_age：领金时年龄（可为小数），按满周岁查计发月数。
+    contrib_months：今后还会缴费的月数，每月按 计发基数 × 缴费指数 × 8% 记入个人账户。
+    base_growth_years：计发基数从基准年增长到领金年的年数，缺省等于 years_to_retire。
+    """
+    if base_growth_years is None:
+        base_growth_years = years_to_retire
+    n = max(int(round(years_to_retire * 12)), 0)
+    r_mo = (1 + account_rate) ** (1 / 12) - 1
     account_at_retire = personal_account * (1 + account_rate) ** years_to_retire
-    wage_at_retire    = city_avg_wage * (1 + wage_growth_rate) ** years_to_retire
+    for m in range(min(contrib_months, n)):
+        deposit = city_avg_wage * (1 + wage_growth_rate) ** (m / 12) * contribution_index * 0.08
+        account_at_retire += deposit * (1 + r_mo) ** (n - m - 1)
+    wage_at_retire = city_avg_wage * (1 + wage_growth_rate) ** base_growth_years
     basic   = wage_at_retire * (1 + contribution_index) / 2 * contribution_years * 0.01
-    dist_m  = DISTRIBUTION_MONTHS.get(retire_age, 139)
-    personal_part = account_at_retire / dist_m
+    personal_part = account_at_retire / annuity_months(retire_age)
     return basic + personal_part
 
 
@@ -215,7 +254,7 @@ def _sim_params(pension, hpf, ins_list, fund_list, stock_list, dep_list,
                       + sum(s["market_value"]  for s in stock_list),
         pension_bal   = pension["personal_account"],
         pension_rate  = pension["account_annual_return"],
-        monthly_pension = pension["monthly_pension"],
+        monthly_pension = pension.get("monthly_pension_real", pension["monthly_pension"]),
         hpf_bal       = hpf["balance"],
         hpf_rate      = hpf["annual_rate"],
         ins_val       = sum(i["cash_value"]    for i in ins_list),

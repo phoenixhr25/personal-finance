@@ -6,10 +6,10 @@ import math
 from datetime import date
 
 CONFIG_FORMAT = "personal-finance-config"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_FILE_BYTES = 1_000_000
 MAX_TEXT_CHARS = 20_000
-RETIRE_AGES = (50, 55, 60, 65)
+RETIRE_AGES = (50, 55, 60)   # 改革前的原法定退休年龄
 
 
 class ConfigError(Exception):
@@ -29,6 +29,7 @@ _SPEC = {
     "global": {
         "discount_rate": ("f", 0.0, 0.30),
         "proj_invest_rate": ("f", -0.20, 0.30),
+        "inflation": ("f", 0.0, 0.10),
         "date_retire": ("d",), "date_pension_start": ("d",), "date_life_end": ("d",),
         "date_base_1": ("d",), "date_base_2": ("d",),
     },
@@ -36,7 +37,8 @@ _SPEC = {
         "account": ("f", 0, 1e9), "monthly": ("f", 0, 1e7), "rate": ("f", -0.10, 0.30),
         "auto": ("b",), "city": ("s", 20), "city_wage": ("f", 0, 1e6),
         "wage_growth": ("f", -0.10, 0.30), "contrib_years": ("i", 0, 60),
-        "contrib_index": ("f", 0, 10), "retire_age": ("i", 50, 65),
+        "contrib_index": ("f", 0, 10), "retire_age": ("i", 50, 60),
+        "birth": ("d",), "contrib_end": ("d",),
     },
     "hpf": {"balance": ("f", 0, 1e9), "years": ("f", 0, 80)},
     "snapshots": {k: ("f", 0, 1e10) for k in
@@ -131,6 +133,13 @@ def migrate(raw):
             data["funds_dca"] = data["funds"]
             notes.append("旧字段 funds 已并入定投基金 funds_dca")
         data.pop("funds", None)
+        version = 1
+    if version == 1:
+        # v2：retire_age 从「退休年龄」改为「改革前的原法定退休年龄」，没有 65 这一档
+        pension = data.get("pension")
+        if isinstance(pension, dict) and pension.get("retire_age") == 65:
+            data["pension"] = {**pension, "retire_age": 60}
+            notes.append("退休年龄 65 已改为原法定退休年龄 60，请补填出生年月以按延迟退休规则推算")
     return data, notes
 
 

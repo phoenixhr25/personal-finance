@@ -14,11 +14,11 @@ from finance_engine import (
     compute_pension, compute_hpf, compute_insurance,
     compute_funds, compute_stocks, compute_deposits,
     build_rows, weighted_avg_return, retirement_projection,
-    eaa, cagr, auto_monthly_pension,
+    eaa, cagr, auto_monthly_pension, statutory_retirement, annuity_months, months_between,
     _sim_params, run_scenario, run_stress,
 )
 from market_api import fetch_fund_prices, fetch_stock_prices
-from config_io import ConfigError, MAX_FILE_BYTES, bounds, validate_config, wrap_export
+from config_io import ConfigError, MAX_FILE_BYTES, RETIRE_AGES, bounds, validate_config, wrap_export
 
 # ── 字体 ──────────────────────────────────────────────────────────────────
 import os, glob as _glob
@@ -177,9 +177,11 @@ with st.sidebar:
     discount_rate    = st.number_input("折现率", value=float(_g.get("discount_rate", 0.03)), step=0.005, format="%.3f", help=RATE_HELP, **_bd("global", "discount_rate"))
     proj_invest_rate = st.number_input("退休推算投资年化", value=float(_g.get("proj_invest_rate", 0.05)),
                                        step=0.01, format="%.2f", help="填小数：5% 填 0.05。保守3-4%，中性5-6%，激进7-8%", **_bd("global", "proj_invest_rate"))
+    inflation_rate   = st.number_input("通胀率", value=float(_g.get("inflation", 0.025)), step=0.005, format="%.3f",
+                                       help="填小数：2.5% 填 0.025。用于把领金当年的名义养老金折成今天的购买力，再和退休月支出比较", **_bd("global", "inflation"))
     date_retire        = st.date_input("预计退休日期",      value=_d(_g.get("date_retire"),        date(2040, 1, 1)))
     date_pension_start = st.date_input("法定领养老金日期",  value=_d(_g.get("date_pension_start"), date(2043, 1, 1)),
-                                       help="达到法定退休年龄、开始领取养老金的日期。退休到领金之间为「过渡期」，需靠自有资产支撑。")
+                                       help="达到法定退休年龄、开始领取养老金的日期。退休到领金之间为「过渡期」，需靠自有资产支撑。自动推算养老金并填了出生年月时，以推算的日期为准。")
     date_life_end      = st.date_input("预期寿命终止日",    value=_d(_g.get("date_life_end"),      date(2080, 1, 1)))
     date_base_1   = st.date_input("基期起始",        value=_d(_g.get("date_base_1"),   date(2020, 1, 1)))
     date_base_2   = st.date_input("对比节点",        value=_d(_g.get("date_base_2"),   date(2023, 1, 1)))
@@ -189,40 +191,72 @@ with st.sidebar:
     # 养老
     st.subheader("① 养老保险")
     pension_account = st.number_input("个人账户余额", value=float(_p.get("account", 100_000)), step=1000.0, **_bd("pension", "account"))
-    pension_rate    = st.number_input("账户年化利率", value=float(_p.get("rate", 0.055)), step=0.001, format="%.3f", help=RATE_HELP, **_bd("pension", "rate"))
+    pension_rate    = st.number_input("账户年化利率", value=float(_p.get("rate", 0.015)), step=0.001, format="%.3f",
+                                    help="填小数：1.5% 填 0.015。即个人账户记账利率，人社部每年 6 月公布：2023 年 3.97%、2024 年 2.62%、2025 年 1.5%", **_bd("pension", "rate"))
 
     pension_auto = st.toggle("按城职保公式自动推算月领金额", value=bool(_p.get("auto", True)))
 
     if pension_auto:
+        # 2025 年基本养老金计发基数（元/月）。未核实的城市沿用旧的社平工资参考值
+        CITY_BASE_YEAR = 2025
         CITY_WAGES = {
-            "深圳": 12500, "北京": 14000, "上海": 13500,
-            "广州": 10500, "杭州": 10500, "成都": 8500,
-            "武汉": 8500,  "南京": 9500,  "其他（手动输入）": 0,
+            "深圳": (11293, True), "北京": (12049, True), "上海": (12434, True),
+            "广州": (9493, True),  "杭州": (10500, False), "成都": (8500, False),
+            "武汉": (8500, False), "南京": (9500, False), "其他（手动输入）": (0, False),
         }
         city_choice = st.selectbox("所在城市", list(CITY_WAGES.keys()),
                                    index=list(CITY_WAGES.keys()).index(_p.get("city", "深圳"))
                                          if _p.get("city") in CITY_WAGES else 0)
         if city_choice == "其他（手动输入）":
-            city_avg_wage = st.number_input("城市月社平工资（元）", value=float(_p.get("city_wage", 8000)), step=100.0, **_bd("pension", "city_wage"))
+            city_avg_wage = st.number_input(f"{CITY_BASE_YEAR} 年计发基数（元/月）", value=float(_p.get("city_wage", 8000)), step=100.0,
+                                            help="当地人社厅每年公布的「基本养老金计发基数」", **_bd("pension", "city_wage"))
         else:
-            city_avg_wage = float(CITY_WAGES[city_choice])
-            st.caption(f"参考社平工资：¥{city_avg_wage:,.0f}/月（非私营单位均薪，数据可能已过时，建议自查当地社保局官网后选「其他」手动输入）")
+            city_avg_wage, _verified = CITY_WAGES[city_choice]
+            city_avg_wage = float(city_avg_wage)
+            if _verified:
+                st.caption(f"{CITY_BASE_YEAR} 年基本养老金计发基数：¥{city_avg_wage:,.0f}/月（当地人社部门公布）")
+            else:
+                st.caption(f"参考值 ¥{city_avg_wage:,.0f}/月，未核实为计发基数，建议查当地人社厅公布值后选「其他」手动输入")
 
-        wage_growth   = st.number_input("社平工资年增长率", value=float(_p.get("wage_growth", 0.04)), step=0.005, format="%.3f", help=RATE_HELP, **_bd("pension", "wage_growth"))
-        contrib_years = st.number_input("预计缴费年限（年）", value=int(_p.get("contrib_years", 20)), step=1, **_bd("pension", "contrib_years"))
+        wage_growth   = st.number_input("计发基数年增长率", value=float(_p.get("wage_growth", 0.02)), step=0.005, format="%.3f",
+                                        help="填小数：2% 填 0.02。深圳 2024→2025 涨 1%，广东涨 2%", **_bd("pension", "wage_growth"))
+        contrib_years = st.number_input("预计缴费年限（年）", value=int(_p.get("contrib_years", 20)), step=1,
+                                        help="到领金时累计的缴费年限（含今后还会缴的年份）", **_bd("pension", "contrib_years"))
         contrib_index = st.number_input("缴费指数", value=float(_p.get("contrib_index", 1.0)), step=0.05, format="%.2f",
                                         help="缴费基数 / 社平工资，一般在 0.6～3 之间，按社平工资缴纳填 1.0", **_bd("pension", "contrib_index"))
-        retire_age    = st.selectbox("退休年龄", [50, 55, 60, 65],
-                                     index=[50,55,60,65].index(int(_p.get("retire_age", 60))))
-        y_to_retire_pension = (date_pension_start - date.today()).days / 365.25
+        contrib_end   = st.date_input("个人账户缴费到", value=_d(_p.get("contrib_end"), date_retire),
+                                      help="今后还会缴社保到哪天。每月按 计发基数 × 缴费指数 × 8% 记入个人账户，默认等于预计退休日期")
+        retire_age    = st.selectbox("原法定退休年龄（改革前）", list(RETIRE_AGES),
+                                     index=list(RETIRE_AGES).index(int(_p.get("retire_age", 60))),
+                                     help="男职工 60；原 55 岁退休的女职工 55；原 50 岁退休的女职工 50")
+        birth         = st.date_input("出生年月", value=_d(_p.get("birth"), None),
+                                      min_value=date(1940, 1, 1), max_value=date.today(),
+                                      help="填写后按渐进式延迟退休规则推算法定退休年龄和领金日期（日期只看年月）")
+        if birth is not None:
+            _age_m, date_pension_start = statutory_retirement(birth, retire_age)
+            _age_years = _age_m / 12
+            st.caption(f"法定退休年龄 {_age_m // 12} 岁 {_age_m % 12} 个月，领金日期 {date_pension_start:%Y-%m}，"
+                       f"计发月数 {annuity_months(_age_years)}（非整岁按满周岁取值）")
+        else:
+            _age_years = retire_age
+            st.caption("未填出生年月：按原法定年龄查计发月数，领金日期用上方「法定领养老金日期」")
+        _today = date.today()
+        y_to_retire_pension = (date_pension_start - _today).days / 365.25
         pension_monthly = auto_monthly_pension(
             pension_account, pension_rate, y_to_retire_pension,
-            city_avg_wage, wage_growth, contrib_years, contrib_index, retire_age,
+            city_avg_wage, wage_growth, contrib_years, contrib_index, _age_years,
+            contrib_months=months_between(_today, min(contrib_end, date_pension_start)),
+            base_growth_years=max(date_pension_start.year - CITY_BASE_YEAR, 0),
         )
-        st.info(f"推算月领金额：**¥{pension_monthly:,.0f}**（开始领取时，含基础养老金+个人账户养老金）")
+        pension_monthly_real = pension_monthly / (1 + inflation_rate) ** max(y_to_retire_pension, 0)
+        st.info(f"推算月领金额：**¥{pension_monthly:,.0f}**（{date_pension_start.year} 年名义金额）\n\n"
+                f"折合今天购买力：**¥{pension_monthly_real:,.0f}**（按通胀 {inflation_rate:.1%}，退休建议用这个数比较）")
     else:
-        pension_monthly = st.number_input("预计月领金额（手动填写）", value=float(_p.get("monthly", 3_000)), step=100.0, **_bd("pension", "monthly"))
+        pension_monthly = st.number_input("预计月领金额（手动填写）", value=float(_p.get("monthly", 3_000)), step=100.0,
+                                          help="按今天的购买力填写", **_bd("pension", "monthly"))
+        pension_monthly_real = pension_monthly
         city_choice = city_avg_wage = wage_growth = contrib_years = contrib_index = retire_age = None
+        birth = contrib_end = None
 
     st.divider()
 
@@ -332,16 +366,17 @@ with st.sidebar:
     # ── 导出配置 ──────────────────────────────────────
     export_data = {
         "global": {
-            "discount_rate": discount_rate, "proj_invest_rate": proj_invest_rate,
+            "discount_rate": discount_rate, "proj_invest_rate": proj_invest_rate, "inflation": inflation_rate,
             "date_retire": str(date_retire), "date_pension_start": str(date_pension_start),
             "date_life_end": str(date_life_end),
             "date_base_1": str(date_base_1), "date_base_2": str(date_base_2),
         },
         "pension": {
-            "account": pension_account, "monthly": pension_monthly, "rate": pension_rate,
+            "account": pension_account, "monthly": pension_monthly_real, "rate": pension_rate,
             "auto": pension_auto, "city": city_choice, "city_wage": city_avg_wage,
             "wage_growth": wage_growth, "contrib_years": contrib_years,
             "contrib_index": contrib_index, "retire_age": retire_age,
+            "birth": str(birth) if birth else None, "contrib_end": str(contrib_end) if contrib_end else None,
         },
         "hpf":      {"balance": hpf_balance, "years": hpf_years},
         "insurance": ins_inputs,
@@ -512,6 +547,7 @@ elif _price_ok:
 pension_params = {
     "personal_account": pension_account, "cost_basis": pension_account,
     "monthly_pension": pension_monthly,  "account_annual_return": pension_rate,
+    "monthly_pension_real": pension_monthly_real,
 }
 hpf_params = {
     "balance": hpf_balance, "cost_basis": hpf_balance,
@@ -719,12 +755,13 @@ st.caption(f"4% 法则退休目标：¥{_target:,.0f}（月支出 ¥{retire_expe
 
 # ── 养老金调整视角 ─────────────────────────────────────
 st.subheader("养老金调整视角")
-_pension_mo  = pension["monthly_pension"]
+_pension_mo  = pension_monthly_real
 _gap_mo      = max(0.0, retire_expense_mo - _pension_mo)
 _target_adj  = _gap_mo * 12 / 0.04
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("养老金月领（推算）", f"¥{_pension_mo:,.0f}")
+c1.metric("养老金月领（今日购买力）", f"¥{_pension_mo:,.0f}",
+          help=f"{date_pension_start.year} 年名义金额 ¥{pension_monthly:,.0f}，按通胀 {inflation_rate:.1%} 折回今天")
 c2.metric("退休月支出",        f"¥{retire_expense_mo:,}")
 c3.metric("需投资组合覆盖",     f"¥{_gap_mo:,.0f}/月")
 c4.metric("调整后4%目标",      f"¥{_target_adj:,.0f}" if _target_adj > 0 else "¥0（盈余）")
@@ -853,7 +890,7 @@ st.subheader("🎯 退休建议")
 # 两阶段目标
 _bridge_months  = max(int((date_pension_start - date_retire).days / 30), 0)
 _bridge_cost    = _bridge_months * retire_expense_mo          # 过渡期消耗（简化，未计利息）
-_pension_gap_mo = max(0.0, retire_expense_mo - pension_monthly)
+_pension_gap_mo = max(0.0, retire_expense_mo - pension_monthly_real)
 _phase2_target  = _pension_gap_mo * 12 / 0.04 if _pension_gap_mo > 0 else 0.0
 _retire_target  = _bridge_cost + _phase2_target
 
@@ -871,10 +908,10 @@ _c2.metric("过渡期消耗", f"¥{_bridge_cost:,.0f}",
            help=f"¥{retire_expense_mo:,.0f}/月 × {_bridge_months} 个月（简化，未计利息）")
 if _pension_gap_mo > 0:
     _c3.metric("养老期补充目标", f"¥{_phase2_target:,.0f}",
-               help=f"养老金 ¥{pension_monthly:,.0f}/月 < 月支出，缺口 ¥{_pension_gap_mo:,.0f}/月，按 4% 法则折算")
+               help=f"养老金（今日购买力）¥{pension_monthly_real:,.0f}/月 < 月支出，缺口 ¥{_pension_gap_mo:,.0f}/月，按 4% 法则折算")
 else:
     _c3.metric("养老期补充目标", "¥0",
-               help=f"养老金 ¥{pension_monthly:,.0f}/月 ≥ 退休月支出 ¥{retire_expense_mo:,.0f}，养老期自给自足")
+               help=f"养老金（今日购买力）¥{pension_monthly_real:,.0f}/月 ≥ 退休月支出 ¥{retire_expense_mo:,.0f}，养老期自给自足")
 
 st.caption(
     f"退休总目标 = 过渡期消耗 ¥{_bridge_cost:,.0f} ＋ 养老期补充 ¥{_phase2_target:,.0f} = **¥{_retire_target:,.0f}**"

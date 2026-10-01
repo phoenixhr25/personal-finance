@@ -1,5 +1,6 @@
 """界面冒烟测试：无界面运行 app.py。需要 streamlit（pip install streamlit pytest）。"""
 import os
+from datetime import date
 import sys
 
 import pytest
@@ -70,3 +71,14 @@ def test_persistent_error_message_after_bad_import():
     at.run()
     at.run()
     assert any("配置未导入" in e.value for e in at.error)
+
+
+def test_birth_date_drives_pension_start():
+    at = fresh()
+    sel = next(s for s in at.selectbox if s.label.startswith("原法定退休年龄"))
+    sel.set_value(50)
+    birth = next(d for d in at.date_input if d.label == "出生年月")
+    birth.set_value(date(1984, 7, 1))
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("54 岁 10 个月" in c.value and "2039-05" in c.value for c in at.caption)

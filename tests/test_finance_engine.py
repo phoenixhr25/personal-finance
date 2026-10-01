@@ -193,3 +193,56 @@ def test_short_holding_fund_uses_total_return():
     f = [{"cost_nav": 1.0, "current_nav": 1.01, "shares": 100, "buy_date": date(2026, 9, 20)}]
     res = fe.compute_funds(f, TODAY)[0]
     assert res["annualized_return"] == pytest.approx(0.01)
+
+
+# ---------- 渐进式延迟退休 / 计发月数 / 后续缴费 ----------
+
+@pytest.mark.parametrize("birth, orig, age_m, retire", [
+    ((1964, 12), 60, 720, (2024, 12)),   # 改革前已到龄，不延迟
+    ((1965, 1), 60, 721, (2025, 2)),     # 官方对照表首行：60 岁 1 个月
+    ((1965, 5), 60, 722, (2025, 7)),
+    ((1976, 9), 60, 756, (2039, 9)),     # 封顶 63 岁
+    ((1970, 1), 55, 661, (2025, 2)),
+    ((1988, 3), 55, 696, (2046, 3)),     # 封顶 58 岁
+    ((1975, 1), 50, 601, (2025, 2)),     # 每 2 个月延迟 1 个月
+    ((1975, 3), 50, 602, (2025, 5)),
+    ((1984, 7), 50, 658, (2039, 5)),     # 54 岁 10 个月
+    ((1990, 1), 50, 660, (2045, 1)),     # 封顶 55 岁
+])
+def test_statutory_retirement(birth, orig, age_m, retire):
+    got_m, got_d = fe.statutory_retirement(date(*birth, 15), orig)
+    assert got_m == age_m
+    assert got_d == date(*retire, 1)
+
+
+def test_annuity_months_full_table_and_floor():
+    assert fe.annuity_months(54) == 175
+    assert fe.annuity_months(54 + 10 / 12) == 175   # 非整岁按满周岁
+    assert fe.annuity_months(58) == 152
+    assert fe.annuity_months(63) == 117
+    assert fe.annuity_months(35) == 233 and fe.annuity_months(75) == 56
+
+
+def test_auto_pension_future_contributions_zero_rate():
+    # 零利率、零增长：12 个月 × 10000 × 1.0 × 8% = 9600 进个账
+    base = fe.auto_monthly_pension(0, 0.0, 1, 10000, 0.0, 0, 1.0, retire_age=60)
+    got = fe.auto_monthly_pension(0, 0.0, 1, 10000, 0.0, 0, 1.0, retire_age=60, contrib_months=12)
+    assert got - base == pytest.approx(9600 / 139)
+
+
+def test_auto_pension_contrib_months_capped_at_horizon():
+    a = fe.auto_monthly_pension(0, 0.0, 1, 10000, 0.0, 0, 1.0, contrib_months=12)
+    b = fe.auto_monthly_pension(0, 0.0, 1, 10000, 0.0, 0, 1.0, contrib_months=999)
+    assert a == pytest.approx(b)
+
+
+def test_auto_pension_base_growth_years_separate():
+    got = fe.auto_monthly_pension(0, 0, 5, 10000, 0.02, 10, 1.0, base_growth_years=8)
+    assert got == pytest.approx(10000 * 1.02 ** 8 * 10 * 0.01)
+
+
+def test_sim_params_prefers_real_pension():
+    pension = {"personal_account": 0, "account_annual_return": 0, "monthly_pension": 10000,
+               "monthly_pension_real": 7000}
+    p = fe._sim_params(pension, {"balance": 0, "annual_rate": 0}, [], [], [], [], 0, 0, 0, 0.03, TODAY, TODAY)
+    assert p["monthly_pension"] == 7000
