@@ -1,6 +1,7 @@
 """行情接口：A股（新浪）+ 基金（天天基金 → 新浪备选）"""
 import re
 import json
+import time
 import requests
 
 _session = requests.Session()
@@ -10,6 +11,8 @@ _HEADERS_SINA = {
     "Referer": "https://finance.sina.com.cn",
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 }
+# 行情缓存：代码 -> (取得时间, 行情)。同一服务器进程内共享，过期后重新拉取
+CACHE_TTL_SECONDS = 300
 _cache: dict = {}
 
 
@@ -44,9 +47,14 @@ def _sina_quote(codes: list) -> dict:
 
 
 def get_price(code: str) -> dict:
-    if code not in _cache:
-        _cache.update(_sina_quote([code]))
-    return _cache.get(code, {})
+    now = time.monotonic()
+    hit = _cache.get(code)
+    if hit and now - hit[0] < CACHE_TTL_SECONDS:
+        return hit[1]
+    for c, info in _sina_quote([code]).items():
+        _cache[c] = (now, info)
+    hit = _cache.get(code)
+    return hit[1] if hit else {}
 
 
 def get_fund_price(code: str) -> dict:
