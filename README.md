@@ -16,6 +16,12 @@
 
 ---
 
+## 隐私
+
+你填的数字只在使用期间经过服务器内存，不写入文件、数据库或日志；行情接口只收到持仓代码。导出的配置文件是明文，含余额和出生年月，**不要贴进 Issue 或公开分享**，提问请用虚构数字。详见 [PRIVACY.md](PRIVACY.md)。
+
+---
+
 ## 这是什么
 
 个人财务分析工具，提供两个入口：
@@ -154,7 +160,11 @@ personal-finance/
 ├── income_statement_template.ipynb  ← Notebook 模板（填你的数据）
 ├── income_statement.ipynb           ← 作者自用版（含真实数据，不公开）
 ├── config_example.py                ← 参数说明文件
+├── config_io.py                     ← 配置文件导入校验与版本迁移
+├── market_api.py                    ← 行情接口（新浪 / 天天基金）
+├── tests/                           ← pytest 测试
 ├── USER_GUIDE.md                    ← 详细使用说明（也内嵌在 app 内）
+├── PRIVACY.md                       ← 隐私说明：数据经过哪里、怎么清除
 └── README.md                        ← 本文件
 ```
 

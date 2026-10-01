@@ -126,6 +126,8 @@ with st.sidebar:
 
     # ── 导入配置 ──────────────────────────────────────
     st.subheader("💾 配置文件")
+    st.caption("配置文件是明文，含余额和出生年月，请勿公开分享。页面数据不落盘，"
+               "[隐私说明](https://github.com/phoenixhr25/personal-finance/blob/main/PRIVACY.md)")
     uploaded = st.file_uploader("导入 JSON 配置", type=["json"], label_visibility="collapsed")
     if uploaded is not None and st.session_state.get("_upload_id") != uploaded.file_id:
         # 守卫放在最前：同一个文件在重新运行时不会被重复处理
