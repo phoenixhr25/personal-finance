@@ -164,6 +164,7 @@ personal-finance/
 ├── config_io.py                     ← 配置文件导入校验与版本迁移
 ├── market_api.py                    ← 行情接口（新浪 / 天天基金）
 ├── tests/                           ← pytest 测试
+├── examples/demo_config.json        ← 虚构的示例配置，导入即可体验
 ├── USER_GUIDE.md                    ← 详细使用说明（也内嵌在 app 内）
 ├── PRIVACY.md                       ← 隐私说明：数据经过哪里、怎么清除
 └── README.md                        ← 本文件

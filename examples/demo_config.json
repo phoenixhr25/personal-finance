@@ -1,0 +1,68 @@
+{
+  "format": "personal-finance-config",
+  "schema_version": 2,
+  "global": {
+    "discount_rate": 0.03,
+    "proj_invest_rate": 0.05,
+    "inflation": 0.025,
+    "date_retire": "2037-01-01",
+    "date_pension_start": "2045-03-01",
+    "date_life_end": "2067-03-01",
+    "date_base_1": "2020-01-01",
+    "date_base_2": "2023-01-01"
+  },
+  "pension": {
+    "account": 180000.0,
+    "monthly": 7014.0,
+    "rate": 0.015,
+    "auto": true,
+    "city": "上海",
+    "city_wage": 12434.0,
+    "wage_growth": 0.02,
+    "contrib_years": 30,
+    "contrib_index": 1.5,
+    "retire_age": 60,
+    "birth": "1982-03-01",
+    "contrib_end": "2037-01-01"
+  },
+  "hpf": {
+    "balance": 150000.0,
+    "years": 5.0
+  },
+  "insurance": [
+    {
+      "name": "示例年金险",
+      "cash_value": 80000.0,
+      "cost_basis": 75000.0,
+      "annual_premium": 10000.0,
+      "premium_years_left": 3,
+      "maturity_value": 120000.0,
+      "years_to_maturity": 8,
+      "policy_irr": 0.03
+    }
+  ],
+  "funds_dca": "000001,50000,90000,100000\n000002,60000,95000,110000\n000003,40000,85000,90000",
+  "stocks": "510300,20000,4.0,2023-06-01,4.5\n600036,1500,35.0,2023-06-01,40.0",
+  "deposits": "示例银行A,活期,150000,0.002\n示例银行B,定期,100000,0.020",
+  "snapshots": {
+    "b1_ph": 150000.0,
+    "b1_ins": 30000.0,
+    "b1_inv": 200000.0,
+    "b1_csh": 120000.0,
+    "b2_ph": 240000.0,
+    "b2_ins": 55000.0,
+    "b2_inv": 330000.0,
+    "b2_csh": 180000.0
+  },
+  "sim": {
+    "monthly_income": 22000.0,
+    "monthly_expense": 13000.0,
+    "retire_expense_mo": 10000.0,
+    "semi_income": 10000.0,
+    "income_interrupt_months": 12,
+    "target_ph": 30,
+    "target_ins": 10,
+    "target_inv": 40,
+    "target_csh": 20
+  }
+}

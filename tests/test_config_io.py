@@ -263,3 +263,11 @@ def test_v2_rejects_65_and_bad_inflation():
     with pytest.raises(ConfigError) as e:
         validate_config(cfg)
     assert len(e.value.problems) == 2
+
+
+def test_example_config_is_valid():
+    import json, os
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "examples", "demo_config.json")
+    clean, warnings = validate_config(json.load(open(path, encoding="utf-8")))
+    assert warnings == []
+    assert clean["pension"]["birth"] == "1982-03-01"

@@ -895,13 +895,13 @@ st.divider()
 st.subheader("🎯 退休建议")
 
 # 两阶段目标
-_bridge_months  = max(int((date_pension_start - date_retire).days / 30), 0)
+_bridge_months  = months_between(date_retire, date_pension_start)   # 按日历月，不用天数 ÷ 30
 _bridge_cost    = _bridge_months * retire_expense_mo          # 过渡期消耗（简化，未计利息）
 _pension_gap_mo = max(0.0, retire_expense_mo - pension_monthly_real)
 _phase2_target  = _pension_gap_mo * 12 / 0.04 if _pension_gap_mo > 0 else 0.0
 _retire_target  = _bridge_cost + _phase2_target
 
-_months_to_ret  = max(int((date_retire - today).days / 30), 1)
+_months_to_ret  = max(months_between(today, date_retire), 1)
 _r_mo           = (1 + proj_invest_rate) ** (1 / 12) - 1
 
 # A. 情景结果文字判断
@@ -980,7 +980,11 @@ _gap_cont_nom = _gap_cont * _defl   # 储蓄和投资增长是名义金额，补
 if _gap_cont == 0:
     _margin_cont = _cont_r["total_real"] - _retire_target
     st.success(f"✅ 继续工作情景已达标，安全边际 ¥{_margin_cont:,.0f}（{_ratio(_margin_cont, _retire_target):.1%}）")
-    st.caption("当前财务路径充裕，无需额外储蓄或推迟退休。")
+    if _retire_target > 0 and _margin_cont / _retire_target < 0.2:
+        st.caption("已达标，但余量不到目标的 20%。通胀率、投资年化、退休月支出稍有变化就可能出现缺口，"
+                   "建议各调一档再看结论是否仍然成立。")
+    else:
+        st.caption("当前财务路径充裕，无需额外储蓄或推迟退休。")
 else:
     st.warning(f"⚠️ 继续工作情景存在缺口 ¥{_gap_cont:,.0f}，以下两条路径可补足：")
     _col_a, _col_b = st.columns(2)
