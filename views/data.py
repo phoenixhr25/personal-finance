@@ -129,6 +129,9 @@ def _social():
         if city == OTHER_CITY:
             F.number(("pension", "city_wage"), f"{calc.CITY_BASE_YEAR} 年计发基数（元/月）",
                      step=100.0, required=True, help="当地人社部门每年公布的「基本养老金计发基数」。")
+        elif city and city not in CITY_BASES:
+            st.warning(f"配置里的城市「{city}」不在预设里。请改选「{OTHER_CITY}」，"
+                       "并填写当地人社部门公布的计发基数。")
         elif city:
             base, verified = CITY_BASES[city]
             st.caption(f"{calc.CITY_BASE_YEAR} 年计发基数：¥{base:,.0f}/月" +
