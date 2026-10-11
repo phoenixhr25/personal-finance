@@ -13,7 +13,10 @@ _HEADERS_SINA = {
 }
 # 行情缓存：代码 -> (取得时间, 行情)。同一服务器进程内共享，过期后重新拉取
 CACHE_TTL_SECONDS = 300
+# 查询失败也短暂记住，避免断网时每改一次输入就等一轮超时
+NEGATIVE_TTL_SECONDS = 60
 _cache: dict = {}
+_fund_cache: dict = {}
 
 
 def _sina_quote(codes: list) -> dict:
@@ -46,18 +49,35 @@ def _sina_quote(codes: list) -> dict:
     return result
 
 
+def _fresh(hit, now):
+    if not hit:
+        return False
+    ttl = CACHE_TTL_SECONDS if hit[1] else NEGATIVE_TTL_SECONDS
+    return now - hit[0] < ttl
+
+
 def get_price(code: str) -> dict:
     now = time.monotonic()
     hit = _cache.get(code)
-    if hit and now - hit[0] < CACHE_TTL_SECONDS:
+    if _fresh(hit, now):
         return hit[1]
-    for c, info in _sina_quote([code]).items():
-        _cache[c] = (now, info)
-    hit = _cache.get(code)
-    return hit[1] if hit else {}
+    got = _sina_quote([code]).get(code, {})
+    _cache[code] = (now, got)
+    return got
 
 
 def get_fund_price(code: str) -> dict:
+    """带缓存的基金行情（成功 5 分钟、失败 1 分钟）。"""
+    now = time.monotonic()
+    hit = _fund_cache.get(code)
+    if _fresh(hit, now):
+        return hit[1]
+    got = _fetch_fund_price(code)
+    _fund_cache[code] = (now, got)
+    return got
+
+
+def _fetch_fund_price(code: str) -> dict:
     """天天基金优先（防止基金代码与同名A股冲突），Sina 备选（场内 ETF）。"""
     # 1. 天天基金
     try:
@@ -87,11 +107,13 @@ def get_fund_price(code: str) -> dict:
     return {}
 
 
-def fetch_fund_prices(fund_input: list) -> list:
+def fetch_fund_prices(fund_input: list, lookup=None) -> list:
+    """lookup：按代码取行情的函数，缺省用在线接口；测试时可替换。"""
+    lookup = lookup or get_fund_price
     result = []
     for f in fund_input:
         manual = f.get("manual_nav")
-        info   = {} if manual else get_fund_price(f["code"])
+        info   = {} if manual else lookup(f["code"])
         result.append({**f,
                        "current_nav":  manual or info.get("price"),
                        "name":         info.get("name") or f["code"],
@@ -100,11 +122,12 @@ def fetch_fund_prices(fund_input: list) -> list:
     return result
 
 
-def fetch_stock_prices(stock_input: list) -> list:
+def fetch_stock_prices(stock_input: list, lookup=None) -> list:
+    lookup = lookup or get_price
     result = []
     for s in stock_input:
         manual = s.get("manual_price")
-        info   = {} if manual else get_price(s["code"])
+        info   = {} if manual else lookup(s["code"])
         result.append({**s,
                        "current_price": manual or info.get("price"),
                        "name":          info.get("name") or s["code"],

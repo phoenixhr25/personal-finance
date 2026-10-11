@@ -173,7 +173,7 @@ def validate_config(raw):
             if sec:
                 clean[name] = sec
 
-    if "insurance" in data:
+    if data.get("insurance") is not None:      # null 表示"保单数量未填写"
         ins = data["insurance"]
         if not isinstance(ins, list):
             problems.append("insurance 必须是列表")

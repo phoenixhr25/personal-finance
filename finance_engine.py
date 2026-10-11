@@ -242,6 +242,28 @@ def retirement_projection(snap_now, proj_invest_rate, ins_list, y_to_retire):
     }
 
 
+def two_phase_target(retire_expense_mo, bridge_months, pension_real_mo,
+                     pension_mult=1.0, withdrawal_rate=0.04):
+    """两阶段退休目标（今日购买力）：过渡期消耗 + 养老期缺口 × 12 ÷ 提取率。
+
+    概览、情景、压力测试都用这一个函数，避免同一情景出现两个"缺口"。
+    pension_mult：对养老金的冲击系数（压力测试），1.0 为不冲击。
+    过渡期消耗不计利息（沿用原简化）。
+    """
+    pension_eff = pension_real_mo * pension_mult
+    gap_mo = max(0.0, retire_expense_mo - pension_eff)
+    bridge_cost = max(bridge_months, 0) * retire_expense_mo
+    phase2 = gap_mo * 12 / withdrawal_rate
+    return {"bridge_months": max(bridge_months, 0), "bridge_cost": bridge_cost,
+            "pension_real": pension_eff, "gap_mo": gap_mo,
+            "phase2": phase2, "total": bridge_cost + phase2}
+
+
+def margin_ratio(margin, target):
+    """余量占目标的比例。目标为 0 时没有意义，返回 None，界面不显示百分比。"""
+    return margin / target if target and target > 0 else None
+
+
 # ── V2 情景模拟 & 压力测试 ─────────────────────────────────────────────────
 
 def _sim_params(pension, hpf, ins_list, fund_list, stock_list, dep_list,
