@@ -63,7 +63,7 @@ pip install akshare numpy-financial pandas matplotlib python-dateutil streamlit
 streamlit run app.py
 ```
 
-浏览器自动打开。首次可以先「体验虚构示例」，或到「数据与假设」填写自己的数据；侧边栏里可以导入、导出 JSON 配置文件。修改任何一项，各页面立即按新数据重新计算，不需要再点「运行」。
+浏览器自动打开。首次可以先「体验虚构示例」；没有配置文件时点「开始填写」，按四组依次填写（有进度提示，基金、股票、存款可用表格或粘贴文本录入），侧边栏里可以导入、导出 JSON 配置文件。修改任何一项，各页面立即按新数据重新计算，不需要再点「运行」。
 
 ### 2b. 使用 Jupyter Notebook
 
