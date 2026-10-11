@@ -14,7 +14,7 @@ def _sidebar(plan):
         tone = "pf-tag-demo" if state.is_demo() else ""
         st.markdown(f'<span class="pf-tag {tone}" style="margin-left:0">{label}</span>',
                     unsafe_allow_html=True)
-        if state.has_data():
+        if state.has_data() and plan.assumptions:
             n = len(plan.missing)
             st.caption("必填项已完整" if n == 0 else f"必填项还缺 {n} 项")
 
@@ -30,9 +30,8 @@ def _sidebar(plan):
             st.caption(" · ".join(lines))
 
         with st.expander("导入 / 导出配置"):
-            up = st.file_uploader("导入 JSON 配置", type=["json"], key="up_side",
-                                  label_visibility="collapsed")
-            state.handle_upload(up, "up_side")
+            st.file_uploader("导入 JSON 配置", type=["json"], key="up_side",
+                             label_visibility="collapsed")
             st.download_button("导出配置", data=state.export_json(), file_name="finance_config.json",
                                mime="application/json", use_container_width=True,
                                disabled=not state.has_data())
@@ -58,6 +57,7 @@ def main(default="overview"):
         pages.append(page)
     current = st.navigation(pages)
 
+    state.process_uploads()          # 先处理上传，再渲染待确认 / 错误提示
     _sidebar(state.plan())
     common.render_notice()
     common.render_import_status()

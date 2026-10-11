@@ -17,6 +17,8 @@ def render(nav):
     plan = state.plan()
     C.source_banner()
 
+    if C.plan_error(plan):
+        return
     if not state.has_data():
         _empty_state(nav)
         return
@@ -38,8 +40,7 @@ def _empty_state(nav):
     with c2.container(border=True):
         st.markdown("**导入配置**")
         st.caption("之前导出的 JSON 配置文件。")
-        up = st.file_uploader("导入配置", type=["json"], key="up_main", label_visibility="collapsed")
-        state.handle_upload(up, "up_main")
+        st.file_uploader("导入配置", type=["json"], key="up_main", label_visibility="collapsed")
     with c3.container(border=True):
         st.markdown("**填写我的数据**")
         st.caption("从零开始填，随时可以返回修改。")

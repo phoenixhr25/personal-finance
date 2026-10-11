@@ -115,7 +115,10 @@ def plan():
     hit = st.session_state.get(PLAN_KEY)
     if hit and hit[0] == key:
         return hit[1]
-    result = calc.compute_plan(cfg())
+    try:
+        result = calc.compute_plan(cfg())
+    except Exception as exc:        # 保留编辑入口：不让一次意外异常把整个应用打崩
+        result = calc.failed_plan(cfg(), exc)
     st.session_state[PLAN_KEY] = (key, result)
     return result
 
@@ -140,6 +143,16 @@ def handle_upload(uploaded, widget_key):
         st.session_state[PENDING] = validate_config(raw)
     except ConfigError as e:
         st.session_state[ERRORS] = e.problems
+
+
+UPLOAD_KEYS = ("up_main", "up_side")
+
+
+def process_uploads():
+    """处理所有上传控件的值。必须在渲染导入提示之前调用：
+    上传控件的值在本轮运行开始时就已在 session_state 里，不需要等控件渲染。"""
+    for k in UPLOAD_KEYS:
+        handle_upload(st.session_state.get(k), k)
 
 
 def confirm_import():

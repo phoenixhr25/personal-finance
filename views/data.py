@@ -28,6 +28,7 @@ def render(nav):
     plan = state.plan()
     C.source_banner()
 
+    C.plan_error(plan)           # 数据页照常渲染，用户可以直接改输入
     prog = calc.required_progress(state.cfg())
     done, total = prog["_all"]
     if total:

@@ -102,3 +102,13 @@ def issue_lines(issues):
     for i in issues:
         tail = "" if i.message == "未填写" else f"：{i.message}"
         st.markdown(f"- {i.label}{tail}")
+
+
+def plan_error(plan):
+    """测算出现意外异常时给出说明；返回 True 表示调用方应停止渲染结果。"""
+    if not plan.error:
+        return False
+    st.error("测算过程中遇到意外错误，没有给出任何数字。请检查最近修改的输入，"
+             "或在「数据与假设」里重新填写相关项。\n\n"
+             f"技术信息：{plan.error}")
+    return True

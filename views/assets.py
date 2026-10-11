@@ -16,6 +16,8 @@ def render(nav):
     st.title("资产")
     plan = state.plan()
     C.source_banner()
+    if C.plan_error(plan):
+        return
     if not state.has_data():
         st.info("还没有数据。请先到「概览」载入示例，或到「数据与假设」填写。")
         if nav is not None:

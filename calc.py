@@ -215,8 +215,13 @@ def requirements(cfg):
         req.append(Requirement(group, tuple(path), label, bool(filled), stage, hint))
 
     # —— 退休目标与基本信息
+    # 个人账户缴费到留空时，默认等于计划停止工作日期，养老金推算要用到它
+    feeds_pension = (bool(_g(cfg, "pension", "auto", default=True))
+                     and _d(_g(cfg, "pension", "contrib_end")) is None)
     need(GROUP_BASIC, ("global", "date_retire"), "计划停止工作日期",
-         _d(_g(cfg, "global", "date_retire")) is not None)
+         _d(_g(cfg, "global", "date_retire")) is not None,
+         "pension" if feeds_pension else "retire",
+         "未填写（个人账户缴费到留空时，缴费截止日默认取这一天）" if feeds_pension else "未填写")
     start, _, _ = pension_start_info(cfg)
     need(GROUP_BASIC, ("global", "date_pension_start"), "开始领取养老金的日期", start is not None,
          "pension", "填写出生年月和原法定退休年龄，或直接填写领取日期")
@@ -228,7 +233,10 @@ def requirements(cfg):
          _g(cfg, "pension", "account") is not None, "assets")
     if _g(cfg, "pension", "auto", default=True):
         city = _g(cfg, "pension", "city")
-        need(GROUP_SOCIAL, ("pension", "city"), "所在城市", city is not None, "pension")
+        known = city in CITY_BASES
+        need(GROUP_SOCIAL, ("pension", "city"), "所在城市", known, "pension",
+             "未填写" if city is None else
+             f"「{city}」不在预设城市里，请改选「{OTHER_CITY}」并填写当地计发基数")
         if city == OTHER_CITY:
             need(GROUP_SOCIAL, ("pension", "city_wage"), "当地计发基数",
                  _g(cfg, "pension", "city_wage") is not None, "pension")
@@ -345,6 +353,7 @@ class Plan:
     scenarios: list = field(default_factory=list)
     stress: list = field(default_factory=list)
     paths: dict = field(default_factory=dict)
+    error: str = None               # 测算过程中的意外异常（界面据此保留编辑入口）
 
     @property
     def missing(self):
@@ -444,11 +453,12 @@ def compute_plan(cfg, today=None, fund_lookup=None, stock_lookup=None):
         if auto:
             city = _g(cfg, "pension", "city")
             base = (float(_g(cfg, "pension", "city_wage")) if city == OTHER_CITY
-                    else float(CITY_BASES[city][0]))
+                    else float(CITY_BASES[city][0]))     # 城市已由 requirements() 保证在预设里
             age0 = int(_g(cfg, "pension", "retire_age"))
             age_years = (age_m / 12) if age_m is not None else age0
             contrib_end = _d(_g(cfg, "pension", "contrib_end")) or plan.date_retire
-            contrib_months = months_between(today, min(contrib_end, start))
+            contrib_months = (months_between(today, min(contrib_end, start))
+                              if contrib_end else 0)
             nominal = auto_monthly_pension(
                 account, acct_rate, y_to_pension, base, growth,
                 _g(cfg, "pension", "contrib_years"), _g(cfg, "pension", "contrib_index"),
@@ -596,6 +606,12 @@ def compute_plan(cfg, today=None, fund_lookup=None, stock_lookup=None):
             paths["semi_feasible"] = paths["semi_required"] <= income * 1.5
     plan.paths = paths
     return plan
+
+
+def failed_plan(cfg, exc, today=None):
+    """测算意外失败时返回的结果：不给任何数字，但页面仍能渲染，用户还能改输入。"""
+    return Plan(today=today or date.today(), issues=collect_issues(cfg),
+                error=f"{type(exc).__name__}: {exc}")
 
 
 # ═════════════════════════════════════════════════════════════════════════

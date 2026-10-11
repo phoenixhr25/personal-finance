@@ -370,3 +370,114 @@ def test_export_then_import_gives_identical_results():
     b = calc.compute_plan(calc.cfg_from_clean(clean), today)
     assert (a.total_npv, a.headline["real"], a.target["total"]) == \
            (b.total_npv, b.headline["real"], b.target["total"])
+
+
+# ── 审阅发现的回归 ───────────────────────────────────────────────────────
+def cfg_blank_contrib_and_retire():
+    cfg = demo_cfg()
+    cfg["pension"].pop("contrib_end")
+    cfg["global"].pop("date_retire")
+    return cfg
+
+
+def cfg_unknown_city():
+    cfg = demo_cfg()
+    cfg["pension"]["city"] = "苏州"
+    return cfg
+
+
+@pytest.mark.parametrize("page", PAGES)
+@pytest.mark.parametrize("make", [cfg_blank_contrib_and_retire, cfg_unknown_city],
+                         ids=["blank_contrib_end_and_retire_date", "unknown_city"])
+def test_review_cases_render_every_page(page, make):
+    run_page(page, make(), "import")
+
+
+def test_blank_retire_date_stays_editable_and_explains_why():
+    at = run_page("data", cfg_blank_contrib_and_retire(), "import")
+    dates = {d.label: d for d in at.date_input}
+    assert "计划停止工作日期" in dates                    # 补填入口还在
+    assert "缴费" in texts(at)                           # 说明为什么必填
+
+
+def test_unknown_city_is_explained_and_selectable_on_data_page():
+    at = open_group(run_page("data", cfg_unknown_city(), "import"), "养老金、公积金、保险")
+    assert "苏州" in texts(at)
+    sel = next(s for s in at.selectbox if s.label == "所在城市")
+    sel.set_value("其他（手动输入）").run()
+    assert at.session_state["cfg"]["pension"]["city"] == "其他（手动输入）"
+
+
+def test_unexpected_calc_error_keeps_data_page_usable():
+    harness = ("import calc\n"
+               "def boom(*a, **k): raise RuntimeError('boom')\n"
+               "calc.compute_plan = boom\n"
+               "import shell; shell.main(default=%r)")
+    original = calc.compute_plan                          # AppTest 在同一进程里执行，必须还原
+    try:
+        for page in ("overview", "data"):
+            at = AppTest.from_string(harness % page, default_timeout=120)
+            at.session_state["cfg"], at.session_state["cfg_source"] = demo_cfg(), "import"
+            at.run()
+            assert not at.exception, [e.value for e in at.exception]
+            assert any("意外错误" in e.value for e in at.error)
+        assert at.number_input                            # 数据页的输入框仍在
+    finally:
+        calc.compute_plan = original
+
+
+UPLOAD_ORDER_HARNESS = '''
+import streamlit as st, state
+from views import common as C
+class Up:
+    file_id = "f1"
+    def __init__(self, b): self.b = b
+    def getvalue(self): return self.b
+state.init()
+# 与 shell.main 相同的顺序：先处理上传，再渲染待确认 / 错误提示
+st.session_state["up_main"] = Up(st.session_state["_bytes"]) if False else None
+state.handle_upload(Up(st.session_state["_bytes"]), "up_main")
+C.render_import_status()
+'''
+
+
+def test_pending_confirmation_shows_in_the_same_run_as_upload():
+    good = json.dumps(calc.cfg_for_export(demo_cfg())).encode()
+    at = AppTest.from_string(UPLOAD_ORDER_HARNESS, default_timeout=60)
+    at.session_state["_bytes"] = good
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.button(key="import_confirm")               # 同一轮就有「确认覆盖」
+
+
+def test_error_shows_in_the_same_run_as_upload():
+    at = AppTest.from_string(UPLOAD_ORDER_HARNESS, default_timeout=60)
+    at.session_state["_bytes"] = b'{"global":{"discount_rate":999}}'
+    at.run()
+    assert any("global.discount_rate" in e.value for e in at.error)
+
+
+def test_shell_processes_uploads_before_rendering_import_status():
+    import inspect
+    import shell
+    src = inspect.getsource(shell.main)
+    assert src.index("process_uploads()") < src.index("render_import_status()")
+    assert "handle_upload" not in inspect.getsource(shell._sidebar)
+    import views.overview as ov
+    assert "handle_upload" not in inspect.getsource(ov)   # 页面里不再各自处理上传
+
+
+def test_upload_values_are_read_from_session_before_widgets_render():
+    harness = ("import streamlit as st, state\n"
+               "class Up:\n"
+               "    file_id='f9'\n"
+               "    def getvalue(self): return st.session_state['_bytes']\n"
+               "state.init()\n"
+               "st.session_state['up_side'] = Up()\n"      # 控件的值已在会话里
+               "state.process_uploads()\n"
+               "st.write('pending' if state.pending() else 'none')")
+    at = AppTest.from_string(harness, default_timeout=60)
+    at.session_state["_bytes"] = json.dumps(calc.cfg_for_export(demo_cfg())).encode()
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.markdown[0].value == "pending"

@@ -315,3 +315,115 @@ def test_policy_fields_add_to_total():
     base = calc.required_progress(cfg)["_all"][1]
     cfg["insurance"] = cfg["insurance"] + [{}]
     assert calc.required_progress(cfg)["_all"][1] == base + len(calc.INS_FIELDS)
+
+
+# ── 审阅发现的回归 ───────────────────────────────────────────────────────
+def test_blank_contrib_end_and_blank_retire_date_do_not_crash():
+    """缴费到留空时默认取停止工作日期；再清空停止工作日期，不能 TypeError。"""
+    cfg = demo_cfg()
+    cfg["pension"].pop("contrib_end")
+    cfg["global"].pop("date_retire")
+    p = calc.compute_plan(cfg, TODAY)
+    assert p.error is None
+    assert p.assets_ready and not p.pension_ready and not p.retire_ready
+    miss = [i for i in p.missing if i.path == ("global", "date_retire")]
+    assert miss and "缴费" in miss[0].message           # 说明为什么需要它
+    assert p.pension["npv"] == 0 and not p.npv_complete
+
+
+def test_retire_date_is_only_a_pension_prerequisite_when_contrib_end_is_blank():
+    cfg = demo_cfg()
+    cfg["global"].pop("date_retire")
+    p = calc.compute_plan(cfg, TODAY)                    # 示例里填了缴费到
+    assert p.pension_ready and not p.retire_ready
+
+
+def test_contrib_end_missing_everywhere_is_defended_in_calc():
+    cfg = demo_cfg()
+    cfg["pension"].pop("contrib_end")
+    cfg["global"].pop("date_retire")
+    # 即使绕过缺失项判断，缴费月数也按 0 处理，不会崩溃
+    import calc as c
+    plan = c.compute_plan(cfg, TODAY)
+    assert plan.error is None
+
+
+def test_unknown_city_is_a_located_missing_item_not_a_keyerror():
+    cfg = demo_cfg()
+    cfg["pension"]["city"] = "苏州"
+    p = calc.compute_plan(cfg, TODAY)
+    assert p.error is None and not p.pension_ready
+    miss = [i for i in p.missing if i.path == ("pension", "city")]
+    assert miss and "苏州" in miss[0].message and "其他" in miss[0].message
+
+
+def test_city_presets_match_config_validation_list():
+    from config_io import CITY_NAMES
+    assert set(calc.CITY_BASES) == set(CITY_NAMES)
+
+
+def test_import_warns_about_unknown_city():
+    raw = wrap_export(calc.cfg_for_export(demo_cfg()))
+    raw["pension"]["city"] = "苏州"
+    clean, warnings = validate_config(raw)
+    assert any("苏州" in w and "其他" in w for w in warnings)
+    assert clean["pension"]["city"] == "苏州"           # 不替用户改，由界面提示改选
+
+
+def test_failed_plan_keeps_issues_and_reports_error():
+    cfg = demo_cfg()
+    cfg["sim"]["monthly_expense"] = None
+    p = calc.failed_plan(cfg, ValueError("boom"), TODAY)
+    assert p.error == "ValueError: boom" and not p.retire_ready
+    assert any(i.path == ("sim", "monthly_expense") for i in p.missing)
+
+
+def test_single_field_extremes_never_crash_the_calc():
+    """配置层允许的每个字段取极值、清空，以及日期两两组合，测算都不应抛异常。"""
+    from config_io import _INS_SPEC, _SPEC
+    import itertools
+    base = demo_cfg()
+    bad = []
+
+    def run(label, cfg):
+        try:
+            calc.compute_plan(cfg, TODAY)
+        except Exception as e:                          # noqa: BLE001
+            bad.append((label, repr(e)))
+
+    for sec, spec in _SPEC.items():
+        for key, sp in spec.items():
+            kind = sp[0]
+            if kind in ("f", "i"):
+                cands = [sp[1], sp[2], (sp[1] + sp[2]) / 2]
+            elif kind == "d":
+                cands = ["1940-01-01", "2026-10-11", "2100-12-31"]
+            elif kind == "b":
+                cands = [True, False]
+            elif kind == "s":
+                cands = ["苏州", ""]
+            else:
+                continue
+            for c in cands:
+                if key == "retire_age" and c not in (50, 55, 60):
+                    continue
+                cfg = copy.deepcopy(base)
+                cfg[sec][key] = c
+                run(f"{sec}.{key}={c!r}", cfg)
+    for key, sp in _INS_SPEC.items():
+        if sp[0] in ("f", "i"):
+            for c in (sp[1], sp[2]):
+                cfg = copy.deepcopy(base)
+                cfg["insurance"][0][key] = c
+                run(f"insurance.{key}={c!r}", cfg)
+    for sec in ("global", "pension", "hpf", "snapshots", "sim"):
+        for key in list(base[sec]):
+            cfg = copy.deepcopy(base)
+            cfg[sec][key] = None
+            run(f"{sec}.{key}=None", cfg)
+    for k1, k2 in itertools.combinations(["date_retire", "date_pension_start", "date_life_end"], 2):
+        for v1, v2 in itertools.product(("1940-01-01", "2100-12-31"), repeat=2):
+            cfg = copy.deepcopy(base)
+            cfg["global"][k1], cfg["global"][k2] = v1, v2
+            run(f"{k1}={v1},{k2}={v2}", cfg)
+    assert bad == []

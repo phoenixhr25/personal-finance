@@ -10,6 +10,8 @@ SCHEMA_VERSION = 2
 MAX_FILE_BYTES = 1_000_000
 MAX_TEXT_CHARS = 20_000
 RETIRE_AGES = (50, 55, 60)   # 改革前的原法定退休年龄
+# 内置计发基数预设的城市（与 calc.CITY_BASES 一致，有测试保证）；其他城市选"其他"并手填
+CITY_NAMES = ("深圳", "北京", "上海", "广州", "杭州", "成都", "武汉", "南京", "其他（手动输入）")
 
 
 class ConfigError(Exception):
@@ -199,6 +201,11 @@ def validate_config(raw):
     for key in data:
         if key not in known:
             warnings.append(f"忽略未知字段 {key}")
+
+    city = clean.get("pension", {}).get("city")
+    if city is not None and city not in CITY_NAMES:
+        warnings.append(f"pension.city「{city}」不在预设城市里，导入后需要改选「其他（手动输入）」"
+                        "并填写当地计发基数")
 
     g = clean.get("global", {})
     order = [("date_retire", "date_pension_start", "退休日期晚于法定领金日期"),
