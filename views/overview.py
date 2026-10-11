@@ -43,8 +43,8 @@ def _empty_state(nav):
     with c3.container(border=True):
         st.markdown("**填写我的数据**")
         st.caption("从零开始填，随时可以返回修改。")
-        if nav is not None:
-            st.page_link(nav.data, label="去填写", use_container_width=True)
+        if st.button("开始填写", key="start_fill", type="primary", use_container_width=True):
+            st.switch_page(nav.data)
     st.caption("数据只在本次使用期间经过服务器内存，不写入文件或数据库。"
                f"[隐私说明]({C.PRIVACY_URL})。完整使用说明在「数据与假设」页底部。")
 
@@ -62,7 +62,8 @@ def _missing(plan, nav):
             C.issue_lines(items)
     if nav is not None:
         c1, c2 = st.columns(2)
-        c1.page_link(nav.data, label="去「数据与假设」补全", use_container_width=True)
+        if c1.button("继续填写", key="continue_fill", type="primary", use_container_width=True):
+            st.switch_page(nav.data)
         if plan.assets_ready:
             c2.page_link(nav.assets, label="先看已填写的资产", use_container_width=True)
     st.caption("填 0 和不填是两回事：确实没有的项请明确填 0，或勾选「暂无」。")

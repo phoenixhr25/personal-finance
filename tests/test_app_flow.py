@@ -38,9 +38,17 @@ def run_page(page="overview", cfg=None, source=None, extra=None):
     return at
 
 
+def open_group(at, name):
+    """数据页一次显示一组输入：先选组再找控件。"""
+    at.radio(key="w:data_group").set_value(name).run()
+    assert not at.exception, [e.value for e in at.exception]
+    return at
+
+
 def texts(at):
     parts = [m.value for m in at.markdown] + [i.value for i in at.info]
     parts += [h.value for h in at.subheader] + [w.value for w in at.warning]
+    parts += [c.value for c in at.caption]
     return " ".join(parts)
 
 
@@ -145,7 +153,7 @@ def test_widget_state_dropped_then_restored_from_config():
 
 
 def test_unfilled_stays_unfilled_and_zero_is_zero():
-    at = run_page("data", demo_cfg(), "import")
+    at = open_group(run_page("data", demo_cfg(), "import"), "收支与未来假设")
     n = next(n for n in at.number_input if n.label.startswith("每月总支出"))
     n.set_value(None).run()
     assert at.session_state["cfg"]["sim"]["monthly_expense"] is None
@@ -157,7 +165,7 @@ def test_unfilled_stays_unfilled_and_zero_is_zero():
 def test_none_declared_checkbox_marks_holding_as_empty():
     cfg = demo_cfg()
     cfg["funds_dca"] = None
-    at = run_page("data", cfg, "import")
+    at = open_group(run_page("data", cfg, "import"), "基金、股票、存款")
     assert any("定投基金" in i.label for i in calc.compute_plan(cfg).missing)
     box = [c for c in at.checkbox if c.key.startswith("w:funds_dca")][0]
     box.check().run()
@@ -166,7 +174,7 @@ def test_none_declared_checkbox_marks_holding_as_empty():
 
 
 def test_insurance_count_resizes_and_keeps_filled_policy():
-    at = run_page("data", demo_cfg(), "import")
+    at = open_group(run_page("data", demo_cfg(), "import"), "养老金、公积金、保险")
     first = copy.deepcopy(at.session_state["cfg"]["insurance"][0])
     cnt = next(n for n in at.number_input if n.label == "保单数量")
     cnt.set_value(2).run()
@@ -178,22 +186,102 @@ def test_insurance_count_resizes_and_keeps_filled_policy():
     assert at.session_state["cfg"]["insurance"] == []
 
 
-def test_every_number_input_has_bounds():
-    at = run_page("data", demo_cfg(), "import")
+GROUPS = list(calc.GROUPS)
+
+
+@pytest.mark.parametrize("group", GROUPS)
+def test_every_number_input_has_bounds(group):
+    at = open_group(run_page("data", demo_cfg(), "import"), group)
     assert [n.label for n in at.number_input if n.min is None or n.max is None] == []
 
 
 @pytest.mark.parametrize("pick", ["min", "max"])
 def test_extreme_legal_values_do_not_crash_any_page(pick):
     at = run_page("data", demo_cfg(), "import")
-    for _ in range(2):          # 保单数量变化后会出现新的输入框
-        for n in at.number_input:
-            n.set_value(n.min if pick == "min" else n.max)
-        at.run()
-        assert not at.exception, [e.value.splitlines()[0] for e in at.exception]
+    for group in GROUPS:
+        open_group(at, group)
+        for _ in range(2):      # 保单数量变化后会出现新的输入框
+            for n in at.number_input:
+                n.set_value(n.min if pick == "min" else n.max)
+            at.run()
+            assert not at.exception, [e.value.splitlines()[0] for e in at.exception]
     cfg = at.session_state["cfg"]
     for page in ("overview", "assets", "scenarios"):
         run_page(page, cfg, "import_edited")
+
+
+# ── 分步填写与引导 ───────────────────────────────────────────────────────
+def test_data_page_shows_progress_and_group_status():
+    cfg = demo_cfg()
+    cfg["sim"]["monthly_expense"] = None
+    at = run_page("data", cfg, "import")
+    done, total = calc.required_progress(cfg)["_all"]
+    assert at.get("progress")[0].proto.text == f"必填项 已填 {done} / {total}"
+    body = texts(at)
+    assert "缺 1 项" in body and "已完成" in body
+
+
+def test_next_and_previous_group_buttons_move_between_groups():
+    at = run_page("data", demo_cfg(), "import")
+    assert at.radio(key="w:data_group").value == GROUPS[0]
+    assert not any(b.key == "grp_prev" for b in at.button)       # 第一组没有「上一组」
+    at.button(key="grp_next").click().run()
+    assert at.radio(key="w:data_group").value == GROUPS[1]
+    at.button(key="grp_next").click().run()
+    at.button(key="grp_prev").click().run()
+    assert at.radio(key="w:data_group").value == GROUPS[1]
+    assert not at.exception
+
+
+def test_last_group_offers_link_back_to_overview_not_next():
+    at = open_group(run_page("data", demo_cfg(), "import"), GROUPS[-1])
+    assert not any(b.key == "grp_next" for b in at.button)
+
+
+def test_start_fill_button_goes_to_data_page_without_inventing_values():
+    at = run_page("overview")
+    at.button(key="start_fill").click().run()
+    assert not at.exception
+    assert "数据与假设" in [t.value for t in at.title]
+    assert at.session_state["cfg_source"] == "none"
+    assert at.session_state["cfg"]["sim"] == {}
+
+
+def test_progress_total_follows_pension_mode_and_policy_count():
+    cfg = demo_cfg()
+    auto_total = calc.required_progress(cfg)["_all"][1]
+    cfg["pension"]["auto"] = False
+    assert calc.required_progress(cfg)["_all"][1] < auto_total       # 手填月领少几项
+    cfg["insurance"] = cfg["insurance"] + [{}]
+    assert calc.required_progress(cfg)["_all"][1] > calc.required_progress(
+        {**cfg, "insurance": cfg["insurance"][:1]})["_all"][1]
+
+
+# ── 持仓：表格与文本 ─────────────────────────────────────────────────────
+def test_table_mode_renders_without_rewriting_config_text():
+    cfg = demo_cfg()
+    cfg["funds_dca"] = "000001, 50000, 90000, 100000"       # 带空格的原始写法
+    at = open_group(run_page("data", cfg, "import"), "基金、股票、存款")
+    assert at.session_state["cfg"]["funds_dca"] == "000001, 50000, 90000, 100000"
+    assert at.session_state["cfg_source"] == "import"       # 没有被当成"已修改"
+
+
+def test_text_mode_edit_writes_back_and_table_reseeds():
+    at = open_group(run_page("data", demo_cfg(), "import"), "基金、股票、存款")
+    at.radio(key="w:hold_mode").set_value("粘贴文本").run()
+    box = next(t for t in at.text_area if t.key == "w:funds_dca")
+    box.set_value("000009,100,10,12").run()
+    assert at.session_state["cfg"]["funds_dca"] == "000009,100,10,12"
+    at.radio(key="w:hold_mode").set_value("表格").run()
+    assert not at.exception
+    assert at.session_state["cfg"]["funds_dca"] == "000009,100,10,12"
+
+
+def test_text_mode_blank_means_unfilled():
+    at = open_group(run_page("data", demo_cfg(), "import"), "基金、股票、存款")
+    at.radio(key="w:hold_mode").set_value("粘贴文本").run()
+    next(t for t in at.text_area if t.key == "w:deposits").set_value("   ").run()
+    assert at.session_state["cfg"]["deposits"] is None
 
 
 # ── 导入 / 取消 / 导出 ───────────────────────────────────────────────────

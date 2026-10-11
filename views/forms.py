@@ -8,6 +8,7 @@ from datetime import date
 
 import streamlit as st
 
+import holdings as H
 import state
 from config_io import bounds
 
@@ -173,3 +174,59 @@ def insurance_count(label, *, help=None):
                     on_change=_commit_ins_count, args=(key,))
     if cur is None:
         st.caption(":orange[未填写（必填）；没有储蓄险请填 0]")
+
+
+# ── 持仓表格：配置里仍是文本，表格是它的另一种视图 ──────────────────────────
+def drop_holding_widget_state():
+    """切换录入方式或清空时，让两种视图都从配置重新取值。"""
+    for p in (("funds_dca",), ("stocks",), ("deposits",)):
+        base = _key(p)
+        for k in (base, base + ":tbl", base + ":base", base + ":none"):
+            st.session_state.pop(k, None)
+
+
+def _commit_none_table(path):
+    key = _key(path)
+    if st.session_state.get(key + ":none"):
+        state.set_value(path, "")
+    else:
+        state.set_value(path, None)
+    st.session_state.pop(key + ":tbl", None)       # 表格重新取值
+    st.session_state.pop(key + ":base", None)
+
+
+def _column_config(kind):
+    cfg = {}
+    for key, title, typ, _ in H.SPECS[kind]:
+        if typ == "number":
+            cfg[title] = st.column_config.NumberColumn(title, min_value=0.0)
+        elif typ == "date":
+            cfg[title] = st.column_config.DateColumn(title, format="YYYY-MM-DD")
+        else:
+            cfg[title] = st.column_config.TextColumn(title)
+    return cfg
+
+
+def holdings_table(path, kind):
+    key = _key(path)
+    tbl_key, base_key, none_key = key + ":tbl", key + ":base", key + ":none"
+    cur = state.get(*path)
+    if base_key not in st.session_state:
+        rows, _ = H.rows_from_text(kind, cur or "")
+        st.session_state[base_key] = H.df_from_rows(kind, rows)
+    edited = st.data_editor(st.session_state[base_key], key=tbl_key, num_rows="dynamic",
+                            hide_index=True, use_container_width=True,
+                            column_config=_column_config(kind))
+    new_text, incomplete, changed, bad = H.sync(kind, cur, edited)
+    if changed:
+        state.set_value(path, new_text)
+        st.session_state[none_key] = False
+        st.rerun()
+    if incomplete:
+        st.caption(f":orange[有 {incomplete} 行没填完，补全后才会计入。]")
+    if bad:
+        st.warning("有 " + str(len(bad)) + " 行文本无法识别，已保留但不计入，可在「粘贴文本」方式里修改：\n\n"
+                   + "\n".join(f"- `{b}`" for b in bad[:5]))
+    if none_key not in st.session_state:
+        st.session_state[none_key] = (state.cfg().get(path[0]) == "")
+    st.checkbox("暂无此类资产", key=none_key, on_change=_commit_none_table, args=(path,))

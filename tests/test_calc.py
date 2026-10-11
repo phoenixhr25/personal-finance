@@ -290,3 +290,28 @@ def test_legacy_retire_age_65_migrates():
     legacy["pension"]["retire_age"] = 65
     clean, notes = validate_config(legacy)
     assert clean["pension"]["retire_age"] == 60 and any("65" in n for n in notes)
+
+
+# ── 必填项进度 ───────────────────────────────────────────────────────────
+def test_required_progress_counts_filled_and_total():
+    full = calc.required_progress(demo_cfg())
+    done, total = full["_all"]
+    assert done == total and total > 0
+    assert all(f == t for g, (f, t) in full.items() if g != "_all")
+    empty = calc.required_progress(calc.empty_cfg())
+    assert empty["_all"][0] == 0 and empty["_all"][1] > 0
+
+
+def test_progress_and_missing_list_agree():
+    cfg = demo_cfg()
+    cfg["sim"]["monthly_expense"] = None
+    cfg["deposits"] = None
+    done, total = calc.required_progress(cfg)["_all"]
+    assert total - done == len(calc.compute_plan(cfg, TODAY).missing) == 2
+
+
+def test_policy_fields_add_to_total():
+    cfg = demo_cfg()
+    base = calc.required_progress(cfg)["_all"][1]
+    cfg["insurance"] = cfg["insurance"] + [{}]
+    assert calc.required_progress(cfg)["_all"][1] == base + len(calc.INS_FIELDS)

@@ -197,61 +197,85 @@ def pension_start_info(cfg):
     return None, None, ""
 
 
-def collect_issues(cfg):
-    out = []
+@dataclass
+class Requirement:
+    group: str
+    path: tuple
+    label: str
+    filled: bool
+    stage: str = "retire"
+    hint: str = "未填写"
 
-    def miss(group, path, label, stage="retire", hint="未填写"):
-        out.append(Issue(group, tuple(path), label, hint, "missing", stage))
+
+def requirements(cfg):
+    """当前配置下所有适用的必填项及是否已填。总数会随养老金模式、保单数量变化。"""
+    req = []
+
+    def need(group, path, label, filled, stage="retire", hint="未填写"):
+        req.append(Requirement(group, tuple(path), label, bool(filled), stage, hint))
 
     # —— 退休目标与基本信息
-    if _d(_g(cfg, "global", "date_retire")) is None:
-        miss(GROUP_BASIC, ("global", "date_retire"), "计划停止工作日期")
+    need(GROUP_BASIC, ("global", "date_retire"), "计划停止工作日期",
+         _d(_g(cfg, "global", "date_retire")) is not None)
     start, _, _ = pension_start_info(cfg)
-    if start is None:
-        miss(GROUP_BASIC, ("global", "date_pension_start"), "开始领取养老金的日期",
-             "pension", "填写出生年月和原法定退休年龄，或直接填写领取日期")
-    if _g(cfg, "sim", "retire_expense_mo") is None:
-        miss(GROUP_BASIC, ("sim", "retire_expense_mo"), "退休后每月支出（按今天的物价）")
+    need(GROUP_BASIC, ("global", "date_pension_start"), "开始领取养老金的日期", start is not None,
+         "pension", "填写出生年月和原法定退休年龄，或直接填写领取日期")
+    need(GROUP_BASIC, ("sim", "retire_expense_mo"), "退休后每月支出（按今天的物价）",
+         _g(cfg, "sim", "retire_expense_mo") is not None)
 
     # —— 养老金、公积金、保险
-    if _g(cfg, "pension", "account") is None:
-        miss(GROUP_SOCIAL, ("pension", "account"), "养老保险个人账户余额", "assets")
-    auto = _g(cfg, "pension", "auto", default=True)
-    if auto:
+    need(GROUP_SOCIAL, ("pension", "account"), "养老保险个人账户余额",
+         _g(cfg, "pension", "account") is not None, "assets")
+    if _g(cfg, "pension", "auto", default=True):
         city = _g(cfg, "pension", "city")
-        if city is None:
-            miss(GROUP_SOCIAL, ("pension", "city"), "所在城市", "pension")
-        elif city == OTHER_CITY and _g(cfg, "pension", "city_wage") is None:
-            miss(GROUP_SOCIAL, ("pension", "city_wage"), "当地计发基数", "pension")
-        if _g(cfg, "pension", "contrib_years") is None:
-            miss(GROUP_SOCIAL, ("pension", "contrib_years"), "预计缴费年限", "pension")
-        if _g(cfg, "pension", "contrib_index") is None:
-            miss(GROUP_SOCIAL, ("pension", "contrib_index"), "缴费指数", "pension")
-        if _g(cfg, "pension", "retire_age") is None:
-            miss(GROUP_BASIC, ("pension", "retire_age"), "原法定退休年龄（改革前）", "pension")
-    elif _g(cfg, "pension", "monthly") is None:
-        miss(GROUP_SOCIAL, ("pension", "monthly"), "预计养老金月领（今天的购买力）", "pension")
-    if _g(cfg, "hpf", "balance") is None:
-        miss(GROUP_SOCIAL, ("hpf", "balance"), "公积金余额", "assets")
-    ins = cfg.get("insurance") if isinstance(cfg, dict) else None
-    if ins is None:
-        miss(GROUP_SOCIAL, ("insurance",), "储蓄险保单数量（没有填 0）", "assets")
+        need(GROUP_SOCIAL, ("pension", "city"), "所在城市", city is not None, "pension")
+        if city == OTHER_CITY:
+            need(GROUP_SOCIAL, ("pension", "city_wage"), "当地计发基数",
+                 _g(cfg, "pension", "city_wage") is not None, "pension")
+        need(GROUP_SOCIAL, ("pension", "contrib_years"), "预计缴费年限",
+             _g(cfg, "pension", "contrib_years") is not None, "pension")
+        need(GROUP_SOCIAL, ("pension", "contrib_index"), "缴费指数",
+             _g(cfg, "pension", "contrib_index") is not None, "pension")
+        need(GROUP_BASIC, ("pension", "retire_age"), "原法定退休年龄（改革前）",
+             _g(cfg, "pension", "retire_age") is not None, "pension")
     else:
-        for i, pol in enumerate(ins):
-            for key, label in INS_FIELDS:
-                if (pol or {}).get(key) is None:
-                    miss(GROUP_SOCIAL, ("insurance", i, key), f"保单 {i + 1} · {label}", "assets")
+        need(GROUP_SOCIAL, ("pension", "monthly"), "预计养老金月领（今天的购买力）",
+             _g(cfg, "pension", "monthly") is not None, "pension")
+    need(GROUP_SOCIAL, ("hpf", "balance"), "公积金余额", _g(cfg, "hpf", "balance") is not None, "assets")
+    ins = cfg.get("insurance") if isinstance(cfg, dict) else None
+    need(GROUP_SOCIAL, ("insurance",), "储蓄险保单数量（没有填 0）", ins is not None, "assets")
+    for i, pol in enumerate(ins or []):
+        for key, label in INS_FIELDS:
+            need(GROUP_SOCIAL, ("insurance", i, key), f"保单 {i + 1} · {label}",
+                 (pol or {}).get(key) is not None, "assets")
 
     # —— 基金、股票、存款
     for key, label in (("funds_dca", "定投基金"), ("stocks", "单笔买入 / ETF / A 股"),
                        ("deposits", "银行存款")):
-        if cfg.get(key) is None:
-            miss(GROUP_HOLD, (key,), label, "assets", "未填写；没有这类资产请勾选「暂无」")
+        need(GROUP_HOLD, (key,), label, cfg.get(key) is not None, "assets",
+             "未填写；没有这类资产请勾选「暂无」")
 
     # —— 收支
     for key, label in (("monthly_income", "每月税后收入"), ("monthly_expense", "每月总支出")):
-        if _g(cfg, "sim", key) is None:
-            miss(GROUP_CASH, ("sim", key), label)
+        need(GROUP_CASH, ("sim", key), label, _g(cfg, "sim", key) is not None)
+    return req
+
+
+def required_progress(cfg):
+    """各组和合计的 (已填, 总数)。"""
+    out = {g: [0, 0] for g in GROUPS}
+    for r in requirements(cfg):
+        out[r.group][1] += 1
+        out[r.group][0] += 1 if r.filled else 0
+    done = sum(v[0] for v in out.values())
+    total = sum(v[1] for v in out.values())
+    return {**{g: tuple(v) for g, v in out.items()}, "_all": (done, total)}
+
+
+def collect_issues(cfg):
+    out = [Issue(r.group, r.path, r.label, r.hint, "missing", r.stage)
+           for r in requirements(cfg) if not r.filled]
+    start, _, _ = pension_start_info(cfg)
 
     # —— 不阻断的问题
     for key, parser, label in (("funds_dca", parse_fund_dca, "定投基金"),

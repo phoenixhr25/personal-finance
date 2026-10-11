@@ -14,32 +14,54 @@ from views import common as C
 from views import forms as F
 
 
+GROUP_KEY = "w:data_group"
+MODE_KEY = "w:hold_mode"
+MODES = ("表格", "粘贴文本")
+
+
+def _goto(group):
+    st.session_state[GROUP_KEY] = group
+
+
 def render(nav):
     st.title("数据与假设")
     plan = state.plan()
     C.source_banner()
 
-    miss = plan.missing
-    if state.has_data() and not miss:
-        st.success("必填项已全部填写。修改任何一项，其他页面会立即按新数据重新计算。")
-    elif miss:
-        st.write(f"必填项还缺 **{len(miss)}** 项。每一组的顶部会列出缺的是哪几项，"
-                 "可以按任意顺序填写。")
-    st.caption("输入框留空表示未填写；确实为零请填 0。留空的假设项使用默认值，并在各页标注「默认」。")
+    prog = calc.required_progress(state.cfg())
+    done, total = prog["_all"]
+    if total:
+        st.progress(done / total, text=f"必填项 已填 {done} / {total}")
+    st.caption("按下面四组依次填写，也可以随时跳到任意一组。输入框留空表示未填写，确实为零请填 0；"
+               "留空的假设项使用默认值，并在各页标注「默认」。")
 
-    tabs = st.tabs([GROUP_BASIC, GROUP_SOCIAL, GROUP_HOLD, GROUP_CASH])
-    with tabs[0]:
-        _group_status(plan, GROUP_BASIC)
-        _basic()
-    with tabs[1]:
-        _group_status(plan, GROUP_SOCIAL)
-        _social()
-    with tabs[2]:
-        _group_status(plan, GROUP_HOLD)
-        _holdings(plan)
-    with tabs[3]:
-        _group_status(plan, GROUP_CASH)
-        _cash()
+    group = st.radio("分组", calc.GROUPS, horizontal=True, key=GROUP_KEY, label_visibility="collapsed")
+    cols = st.columns(len(calc.GROUPS))
+    for col, g in zip(cols, calc.GROUPS):
+        f, t = prog[g]
+        mark = ":green[已完成]" if f == t else f":orange[缺 {t - f} 项]"
+        col.caption(f"{'**' + g + '**' if g == group else g}　{mark}")
+
+    st.divider()
+    _group_status(plan, group)
+    {GROUP_BASIC: _basic, GROUP_SOCIAL: _social, GROUP_HOLD: lambda: _holdings(plan),
+     GROUP_CASH: _cash}[group]()
+
+    # 上一组 / 下一组
+    st.divider()
+    i = calc.GROUPS.index(group)
+    c1, c2 = st.columns(2)
+    if i > 0:
+        c1.button(f"← {calc.GROUPS[i - 1]}", key="grp_prev", on_click=_goto,
+                  args=(calc.GROUPS[i - 1],), use_container_width=True)
+    if i < len(calc.GROUPS) - 1:
+        c2.button(f"{calc.GROUPS[i + 1]} →", key="grp_next", type="primary", on_click=_goto,
+                  args=(calc.GROUPS[i + 1],), use_container_width=True)
+    elif nav is not None:
+        c2.page_link(nav.overview, label="查看测算结果", use_container_width=True)
+    if done == total and total and nav is not None and i < len(calc.GROUPS) - 1:
+        st.success("必填项已全部填写，可以到「概览」查看结果，也可以继续完善其他项。")
+        st.page_link(nav.overview, label="查看测算结果")
 
     with st.expander("高级设置（可选）：历史快照、目标资产配置"):
         _advanced()
@@ -144,21 +166,33 @@ def _social():
 
 
 # ── 3 基金、股票、存款 ───────────────────────────────────────────────────
+HOLDINGS = (
+    (("funds_dca",), "funds_dca", "定投基金（A 类）",
+     "每行一只：代码、份额、持有成本（总额）、当前市值（总额）。不需要买入日期，不联网取行情。",
+     "270023, 3250.58, 17111.57, 20139.62", calc.parse_fund_dca),
+    (("stocks",), "stocks", "单笔买入 / ETF / A 股（B 类）",
+     "每行一笔：代码、股数、成本价、买入日期；当前价可选，填了就不联网取行情。",
+     "600036, 1500, 35.00, 2023-06-01, 40.00", calc.parse_stocks),
+    (("deposits",), "deposits", "银行存款",
+     "每行一笔：银行、类型（活期、定期等标签）、余额；年化利率可选，不填按 0。",
+     "示例银行, 活期, 100000, 0.002", calc.parse_deposits),
+)
+
+
 def _holdings(plan):
-    st.markdown("**定投基金（A 类）**")
-    st.caption("每行：代码, 份额, 持有成本（总额）, 当前市值（总额）。支持中文逗号，可直接从理财 App 抄。")
-    F.holdings(("funds_dca",), "定投基金", example="270023, 3250.58, 17111.57, 20139.62")
-    _count("funds_dca", calc.parse_fund_dca)
-
-    st.markdown("**单笔买入 / ETF / A 股（B 类）**")
-    st.caption("每行：代码, 股数或份额, 成本价, 买入日期（YYYY-MM-DD）[, 当前价]。第 5 列填了就不再联网取行情。")
-    F.holdings(("stocks",), "单笔持仓", example="600036, 1500, 35.00, 2023-06-01, 40.00")
-    _count("stocks", calc.parse_stocks)
-
-    st.markdown("**银行存款**")
-    st.caption("每行：银行名, 类型, 余额[, 年化利率]。类型只是标签；利率不填按 0。")
-    F.holdings(("deposits",), "银行存款", example="示例银行, 活期, 100000, 0.002", height=90)
-    _count("deposits", calc.parse_deposits)
+    st.radio("录入方式", MODES, horizontal=True, key=MODE_KEY,
+             on_change=F.drop_holding_widget_state,
+             help="表格适合逐笔填写；从理财 App 里一次复制多行时，用「粘贴文本」更快。两种方式改的是同一份数据。")
+    mode = st.session_state.get(MODE_KEY, MODES[0])
+    st.caption("手机屏幕较窄时，表格要左右滑动，用「粘贴文本」更方便。")
+    for path, kind, title, hint, example, parser in HOLDINGS:
+        st.markdown(f"**{title}**")
+        st.caption(hint)
+        if mode == MODES[0]:
+            F.holdings_table(path, kind)
+        else:
+            F.holdings(path, title, example=example)
+        _count(kind, parser)
 
 
 def _count(key, parser):
@@ -170,32 +204,33 @@ def _count(key, parser):
 
 # ── 4 收支与未来假设 ─────────────────────────────────────────────────────
 def _cash():
-    st.markdown("**收支**")
     F.number(("sim", "monthly_income"), "每月税后收入（元）", step=500.0, required=True,
              help="用来推算停止工作前每月的结余。")
     F.number(("sim", "monthly_expense"), "每月总支出（元）", step=500.0, required=True,
              help="含房贷、生活等全部开销。按固定金额推算，不随通胀增长。")
-    F.number(("sim", "semi_income"), "半退休月收入（元，可选）", step=500.0,
-             help="不填则不计算「半退休」情景。")
-    F.number(("sim", "income_interrupt_months"), "收入中断月数", kind="int",
-             default_hint="12", help="「收入中断」情景：从今天起收入为 0 的月数。")
 
-    st.markdown("**未来假设**（留空使用默认值）")
-    F.number(("global", "inflation"), "通胀率", step=0.005, fmt="%.3f", default_hint="2.5%",
-             help=F.RATE_HELP + "。把未来的名义金额折成今日购买力。"
-                  "近两年实际 CPI 接近 0，十几年的跨度可以自己判断。")
-    F.number(("global", "proj_invest_rate"), "退休前投资年化", step=0.01, fmt="%.3f", default_hint="5.0%",
-             help=F.RATE_HELP + "。只用于推算到停止工作日的投资资产，不要用历史年化。")
-    F.number(("global", "discount_rate"), "折现率", step=0.005, fmt="%.3f", default_hint="3.0%",
-             help=F.RATE_HELP + "。只用于「资产」页的 NPV，不影响退休目标比较。")
-    F.number(("pension", "rate"), "个人账户记账利率", step=0.001, fmt="%.3f", default_hint="1.5%",
-             help=F.RATE_HELP + "。人社部每年 6 月公布：2023 年 3.97%、2024 年 2.62%、2025 年 1.5%。")
-    F.number(("pension", "wage_growth"), "计发基数年增长率", step=0.005, fmt="%.3f", default_hint="2.0%",
-             help=F.RATE_HELP + "。深圳 2024→2025 涨约 1%，广东涨约 2%。")
-    F.number(("hpf", "years"), "公积金预计几年后动用", step=1.0, default_hint="10 年",
-             help="只影响公积金的 NPV。")
-    F.date_field(("global", "date_life_end"), "预期寿命终止日", default_hint="2080-01-01",
-                 help="只影响 NPV 和等值月均的计算区间。")
+    with st.expander("可选项与未来假设（都有默认值，可以先不改）"):
+        F.number(("sim", "semi_income"), "半退休月收入（元，可选）", step=500.0,
+                 help="不填则不计算「半退休」情景。")
+        F.number(("sim", "income_interrupt_months"), "收入中断月数", kind="int",
+                 default_hint="12", help="「收入中断」情景：从今天起收入为 0 的月数。")
+        st.markdown("**未来假设**（留空使用默认值）")
+        F.number(("global", "inflation"), "通胀率", step=0.005, fmt="%.3f", default_hint="2.5%",
+                 help=F.RATE_HELP + "。把未来的名义金额折成今日购买力。"
+                      "近两年实际 CPI 接近 0，十几年的跨度可以自己判断。")
+        F.number(("global", "proj_invest_rate"), "退休前投资年化", step=0.01, fmt="%.3f",
+                 default_hint="5.0%",
+                 help=F.RATE_HELP + "。只用于推算到停止工作日的投资资产，不要用历史年化。")
+        F.number(("global", "discount_rate"), "折现率", step=0.005, fmt="%.3f", default_hint="3.0%",
+                 help=F.RATE_HELP + "。只用于「资产」页的 NPV，不影响退休目标比较。")
+        F.number(("pension", "rate"), "个人账户记账利率", step=0.001, fmt="%.3f", default_hint="1.5%",
+                 help=F.RATE_HELP + "。人社部每年 6 月公布：2023 年 3.97%、2024 年 2.62%、2025 年 1.5%。")
+        F.number(("pension", "wage_growth"), "计发基数年增长率", step=0.005, fmt="%.3f",
+                 default_hint="2.0%", help=F.RATE_HELP + "。深圳 2024→2025 涨约 1%，广东涨约 2%。")
+        F.number(("hpf", "years"), "公积金预计几年后动用", step=1.0, default_hint="10 年",
+                 help="只影响公积金的 NPV。")
+        F.date_field(("global", "date_life_end"), "预期寿命终止日", default_hint="2080-01-01",
+                     help="只影响 NPV 和等值月均的计算区间。")
 
 
 # ── 高级 ─────────────────────────────────────────────────────────────────
