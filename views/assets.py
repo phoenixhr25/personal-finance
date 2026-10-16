@@ -131,8 +131,8 @@ def render(nav):
                   help=C.yuan(total_ret))
         r2.metric("折合今日购买力", C.wan(total_ret / plan.deflator),
                   help=f"按通胀 {C.pct(plan.assumptions['inflation'][0])}，折算系数 {plan.deflator:.3f}")
-        st.caption("退休推算是「停止工作后纯靠现有资产增值」的机械推算，不含未来工资转入；"
-                   "养老 + 公积金固定按 5.5%、现金固定按 2.5% 增长。"
+        st.caption("退休推算是「停止工作后纯靠现有资产增值」的机械推算，不含未来工资转入。各层按各自的利率增长："
+                   "个人账户按记账利率，公积金按 2.5%，储蓄险按保单 IRR，投资按退休前投资年化，存款按各笔利率加权。"
                    "这里是名义金额，与目标比较请看「概览」和「情景」。")
     else:
         st.caption("填写计划停止工作日期后，这里显示退休推算。")

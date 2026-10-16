@@ -211,11 +211,13 @@ def build_rows(pension, hpf, ins_list, fund_list, stock_list, dep_list):
                      "npv": ins["npv"], "annual_return": ins["annualized_return"]})
     for f in fund_list:
         prefix = "定投" if not f.get("buy_date") else "基金"
-        rows.append({"layer": "③ 投资层", "category": f"{prefix}·{f.get('name', f['code'])}",
+        tag = "（按成本价计）" if f.get("price_fallback") else ""
+        rows.append({"layer": "③ 投资层", "category": f"{prefix}·{f.get('name', f['code'])}{tag}",
                      "market_value": f["market_value"], "cost_basis": f["cost_basis"],
                      "npv": f["npv"], "annual_return": f["annualized_return"]})
     for s in stock_list:
-        rows.append({"layer": "③ 投资层", "category": f"精确·{s.get('name', s['code'])}",
+        tag = "（按成本价计）" if s.get("price_fallback") else ""
+        rows.append({"layer": "③ 投资层", "category": f"精确·{s.get('name', s['code'])}{tag}",
                      "market_value": s["market_value"], "cost_basis": s["cost_basis"],
                      "npv": s["npv"], "annual_return": s["annualized_return"]})
     for d in dep_list:
@@ -232,13 +234,26 @@ def weighted_avg_return(rows):
     return sum(r["cost_basis"] / total_cost * r["annual_return"] for r in rows)
 
 
-def retirement_projection(snap_now, proj_invest_rate, ins_list, y_to_retire):
+def retirement_projection(snap_now, proj_invest_rate, ins_list, y_to_retire,
+                          pension_rate=0.055, hpf_rate=0.055, cash_rate=0.025,
+                          pension_balance=None):
+    """各层按各自的利率复利推算到停止工作日（名义金额，不含未来工资转入）。
+
+    不传 pension_balance 时，养老 + 公积金合并按 pension_rate 推算（旧行为，仅为兼容）；
+    传入后把"养老 + 公积金"拆开，个人账户按 pension_rate、公积金按 hpf_rate。
+    """
     ins_irr = sum(i["policy_irr"] for i in ins_list) / max(len(ins_list), 1)
+    if pension_balance is None:
+        pension_hpf = snap_now["pension_hpf"] * (1 + pension_rate) ** y_to_retire
+    else:
+        hpf_part = snap_now["pension_hpf"] - pension_balance
+        pension_hpf = (pension_balance * (1 + pension_rate) ** y_to_retire
+                       + hpf_part * (1 + hpf_rate) ** y_to_retire)
     return {
-        "pension_hpf": snap_now["pension_hpf"] * (1 + 0.055) ** y_to_retire,
+        "pension_hpf": pension_hpf,
         "insurance":   snap_now["insurance"]   * (1 + ins_irr) ** y_to_retire,
         "investment":  snap_now["investment"]  * (1 + proj_invest_rate) ** y_to_retire,
-        "cash":        snap_now["cash"]        * (1 + 0.025) ** y_to_retire,
+        "cash":        snap_now["cash"]        * (1 + cash_rate) ** y_to_retire,
     }
 
 
@@ -307,6 +322,7 @@ def run_scenario(name, income_schedule, p):
     r_ins = (1 + p["ins_irr"])       ** (1/12) - 1
 
     cash_depl = None
+    uncovered_from = None
     cur = p["today"]
     while cur < p["date_retire"]:
         income = p["monthly_income"]
@@ -323,8 +339,10 @@ def run_scenario(name, income_schedule, p):
             if cash_depl is None:
                 cash_depl = cur
             sell = min(-cash, investment)
-            investment = max(investment - sell, 0)
-            cash = 0
+            investment -= sell
+            cash += sell                      # 变现后仍不足的赤字留作负现金，不再被清零
+            if cash < 0 and uncovered_from is None:
+                uncovered_from = cur
         cur += _rd(months=1)
 
     total    = pension_bal + hpf_bal + ins_val + investment + cash
@@ -336,6 +354,7 @@ def run_scenario(name, income_schedule, p):
                 ins_2036=ins_val, invest_2036=investment,
                 cash_2036=cash, total_2036=total,
                 inv_cash=inv_cash,
+                uncovered=max(0.0, -cash), uncovered_from=uncovered_from,
                 total_real=total / defl, inv_cash_real=inv_cash / defl,
                 gap=max(0.0, target - total / defl))
 
@@ -358,6 +377,7 @@ def run_stress(label, p, investment_shock=1.0, inflation=0.0,
     r_ins = (1 + p["ins_irr"])       ** (1/12) - 1
 
     cash_depl = None
+    uncovered_from = None
     cur = p["today"]
     month_n = 0
     while cur < p["date_retire"]:
@@ -371,8 +391,10 @@ def run_stress(label, p, investment_shock=1.0, inflation=0.0,
             if cash_depl is None:
                 cash_depl = cur
             sell = min(-cash, investment)
-            investment = max(investment - sell, 0)
-            cash = 0
+            investment -= sell
+            cash += sell                      # 变现后仍不足的赤字留作负现金，不再被清零
+            if cash < 0 and uncovered_from is None:
+                uncovered_from = cur
         cur += _rd(months=1)
         month_n += 1
 
@@ -384,6 +406,7 @@ def run_stress(label, p, investment_shock=1.0, inflation=0.0,
     gap_mo      = max(0.0, p["retire_expense_mo"] - eff_pension)
     target_adj  = gap_mo * 12 / 0.04
     return dict(label=label, total_2036=total, inv_cash=inv_cash,
+                uncovered=max(0.0, -cash), uncovered_from=uncovered_from,
                 total_real=total / defl, inv_cash_real=inv_real,
                 cash_depl=cash_depl,
                 target_adj=target_adj,

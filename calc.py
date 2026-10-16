@@ -427,8 +427,12 @@ def compute_plan(cfg, today=None, fund_lookup=None, stock_lookup=None):
     deps_raw, _ = parse_deposits(cfg.get("deposits"))
     fund_in = fetch_fund_prices(funds_raw, lookup=fund_lookup)
     stock_in = fetch_stock_prices(stocks_raw, lookup=stock_lookup)
-    plan.price_failed = ([f["code"] for f in fund_in if not f.get("current_nav")]
-                         + [s["code"] for s in stock_in if not s.get("current_price")])
+    for f in fund_in:
+        f["price_fallback"] = not f.get("current_nav")        # 取不到行情：按成本价计，表里标注
+    for s_ in stock_in:
+        s_["price_fallback"] = not s_.get("current_price")
+    plan.price_failed = ([f["code"] for f in fund_in if f["price_fallback"]]
+                         + [s_["code"] for s_ in stock_in if s_["price_fallback"]])
 
     account = float(_g(cfg, "pension", "account"))
     ins_in = _ins_inputs(cfg)
@@ -518,7 +522,13 @@ def compute_plan(cfg, today=None, fund_lookup=None, stock_lookup=None):
 
     if plan.date_retire:
         plan.years_to_retire = max((plan.date_retire - today).days / 365.25, 0.0)
-        plan.snap_ret = retirement_projection(plan.snap_now, invest, ins_in, plan.years_to_retire)
+        dep_total = sum(d["balance"] for d in plan.dep_list)
+        cash_rate = (sum(d["balance"] * d["rate"] for d in plan.dep_list) / dep_total
+                     if dep_total else 0.0)                    # 存款按各笔利率按余额加权
+        plan.snap_ret = retirement_projection(
+            plan.snap_now, invest, ins_in, plan.years_to_retire,
+            pension_rate=acct_rate, hpf_rate=DEFAULTS["hpf_rate"], cash_rate=cash_rate,
+            pension_balance=account)
         plan.deflator = (1 + infl) ** plan.years_to_retire
 
     if not plan.retire_ready:
@@ -552,6 +562,7 @@ def compute_plan(cfg, today=None, fund_lookup=None, stock_lookup=None):
             "liquid_real": r["inv_cash_real"], "liquid_ok": liquid_ok,
             "liquid_short": max(0.0, plan.target["bridge_cost"] - r["inv_cash_real"]),
             "cash_depl": r["cash_depl"],
+            "uncovered": r["uncovered"], "uncovered_from": r["uncovered_from"],
             "liq_now": liq_now, "liq_months": int(liq_now / spend) if spend else None,
             "ref4_diff": r["total_real"] - plan.ref4,
         }
@@ -577,6 +588,7 @@ def compute_plan(cfg, today=None, fund_lookup=None, stock_lookup=None):
             "margin_pct": margin_ratio(margin, tgt["total"]), "meets": margin >= 0,
             "liquid_real": t["inv_cash_real"],
             "liquid_ok": None if bridge == 0 else t["inv_cash_real"] >= tgt["bridge_cost"],
+            "uncovered": t["uncovered"],
             "old_coverage": t["coverage"], "old_target": t["target_adj"],
         })
 

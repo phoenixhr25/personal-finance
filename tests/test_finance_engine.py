@@ -276,3 +276,51 @@ def test_stress_coverage_uses_real_investable():
     t = fe.run_stress("x", p)
     assert t["coverage"] == pytest.approx(t["inv_cash_real"] / t["target_adj"])
     assert t["inv_cash_real"] == pytest.approx(t["inv_cash"] / p["deflator"])
+
+
+# ---------- 引擎核对 #7 / #8 ----------
+
+def test_projection_legacy_signature_still_uses_fixed_rates():
+    snap = {"pension_hpf": 1000.0, "insurance": 0.0, "investment": 0.0, "cash": 1000.0}
+    out = fe.retirement_projection(snap, 0.05, [], 10)
+    assert out["pension_hpf"] == pytest.approx(1000 * 1.055 ** 10)
+    assert out["cash"] == pytest.approx(1000 * 1.025 ** 10)
+
+
+def test_projection_splits_pension_and_hpf():
+    snap = {"pension_hpf": 300.0, "insurance": 0.0, "investment": 0.0, "cash": 0.0}
+    out = fe.retirement_projection(snap, 0.05, [], 10, pension_rate=0.015, hpf_rate=0.025,
+                                   cash_rate=0.0, pension_balance=100.0)
+    assert out["pension_hpf"] == pytest.approx(100 * 1.015 ** 10 + 200 * 1.025 ** 10)
+
+
+def _sp_deficit():
+    # 用月初日期：模拟按"上一个日期 + 1 个月"滚动，起始日是 29–31 号时会被 2 月截成 28 号而多跑一个月
+    # （已知问题，见 FINDINGS，与本组测试无关）
+    return {"today": date(2026, 10, 1), "date_retire": date(2027, 10, 1),
+            "cash": 1000.0, "investment": 2000.0, "pension_bal": 0.0, "hpf_bal": 0.0,
+            "ins_val": 0.0, "pension_rate": 0.0, "hpf_rate": 0.0, "ins_irr": 0.0,
+            "proj_rate": 0.0, "monthly_income": 0.0, "monthly_expense": 1000.0,
+            "retire_expense_mo": 0.0, "monthly_pension": 0.0, "deflator": 1.0}
+
+
+def test_scenario_keeps_uncovered_deficit_as_negative_cash():
+    r = fe.run_scenario("x", [], _sp_deficit())      # 12 个月 × 1000 = 12000，资产只有 3000
+    assert r["invest_2036"] == 0
+    assert r["cash_2036"] == pytest.approx(-9000)
+    assert r["total_2036"] == pytest.approx(-9000)
+    assert r["uncovered"] == pytest.approx(9000) and r["uncovered_from"] is not None
+
+
+def test_scenario_fully_covered_deficit_leaves_no_uncovered():
+    p = _sp_deficit()
+    p["monthly_expense"] = 100.0                      # 12 × 100 = 1200，存款加投资足够
+    r = fe.run_scenario("x", [], p)
+    assert r["uncovered"] == 0 and r["uncovered_from"] is None
+    assert r["total_2036"] == pytest.approx(3000 - 1200)
+
+
+def test_stress_keeps_uncovered_deficit_too():
+    t = fe.run_stress("x", _sp_deficit())
+    assert t["uncovered"] == pytest.approx(9000)
+    assert t["total_2036"] == pytest.approx(-9000)

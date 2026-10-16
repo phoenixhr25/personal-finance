@@ -50,7 +50,7 @@ def _comparison(plan):
     ok = [s for s in plan.scenarios if s.get("available")]
     # 主表：短标签 + 万元，窄屏下会换行而不是横向滚动
     main = {"余量（+）/ 缺口（−）": [], "余量占目标": [], "退休资产": [], "两阶段目标": [],
-            "过渡期流动资产": [], "存款耗尽": []}
+            "过渡期流动资产": [], "存款耗尽": [], "未覆盖赤字": []}
     for s in plan.scenarios:
         if not s.get("available"):
             for k in main:
@@ -62,6 +62,7 @@ def _comparison(plan):
         main["两阶段目标"].append(C.wan(s["target"]))
         main["过渡期流动资产"].append(f"{C.wan(s['liquid_real'])}，{_cover(s)}")
         main["存款耗尽"].append("不耗尽" if s["cash_depl"] is None else str(s["cash_depl"])[:7])
+        main["未覆盖赤字"].append("无" if not s["uncovered"] else C.wan(-s["uncovered"]))
     st.table(pd.DataFrame(main, index=names).T)
     st.caption(f"资产均为今日购买力。折算系数 {plan.deflator:.3f}（通胀 "
                f"{C.pct(plan.assumptions['inflation'][0])}{C.default_tag(plan.assumptions['inflation'][1])}，"
@@ -92,6 +93,10 @@ def _comparison(plan):
 
 
 def _notes(plan):
+    for s in plan.scenarios:
+        if s.get("available") and s["uncovered"]:
+            st.error(f"「{s['name']}」：存款耗尽、基金股票也全部变现后，从 {str(s['uncovered_from'])[:7]} 起"
+                     f"仍有 {C.yuan(s['uncovered'])} 的赤字无法覆盖，已作为负现金计入退休资产。")
     for s in plan.scenarios:
         if not s.get("available") or s["cash_depl"] is None:
             continue

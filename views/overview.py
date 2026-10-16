@@ -142,6 +142,9 @@ def _conclusion(plan, nav):
             st.write(":green[养老金覆盖退休月支出，养老期不需要靠资产补充。]")
 
     # 其他情景（已有计算）
+    if head["uncovered"]:
+        st.error(f"按「继续工作」推算，到停止工作前存款和投资全部用完后仍有 {C.yuan(head['uncovered'])} "
+                 "的赤字，已作为负现金计入退休资产。请先检查每月收入和支出。")
     others = [s for s in plan.scenarios[1:] if s.get("available") and not s["meets"]]
     if others:
         txt = "；".join(f"「{s['name']}」低于目标 {C.wan(-s['margin'])}" for s in others)

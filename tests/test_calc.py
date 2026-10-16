@@ -44,7 +44,8 @@ def test_overview_metrics_unchanged(plan):
     assert money(plan.total_mv) == metric("当前总资产")
     assert money(plan.total_npv) == metric("NPV")
     assert money(plan.eaa_month) == metric("等值月均")
-    assert money(sum(plan.snap_ret.values())) == metric("2037 推算总资产")
+    # 「推算总资产」2026-10-16 起各层按各自利率推算（引擎核对 #7），不再与基线相同；
+    # 其余数字都不变。新值用公式显式核对，见 test_projection_uses_each_layers_own_rate。
     assert f"{plan.w_return:.2%}" == metric("加权年化")
 
 
@@ -427,3 +428,75 @@ def test_single_field_extremes_never_crash_the_calc():
             cfg["global"][k1], cfg["global"][k2] = v1, v2
             run(f"{k1}={v1},{k2}={v2}", cfg)
     assert bad == []
+
+
+# ── 引擎核对 #7：退休推算按各层利率 ───────────────────────────────────────
+def test_projection_uses_each_layers_own_rate(plan):
+    y = plan.years_to_retire
+    cfg = demo_cfg()
+    acct, hpf = cfg["pension"]["account"], cfg["hpf"]["balance"]
+    pen_rate = plan.assumptions["account_rate"][0]
+    expected_pen = acct * (1 + pen_rate) ** y + hpf * 1.025 ** y
+    assert plan.snap_ret["pension_hpf"] == pytest.approx(expected_pen)
+    dep = plan.dep_list
+    rate = sum(d["balance"] * d["rate"] for d in dep) / sum(d["balance"] for d in dep)
+    assert plan.snap_ret["cash"] == pytest.approx(plan.snap_now["cash"] * (1 + rate) ** y)
+    assert plan.snap_ret["investment"] == pytest.approx(
+        plan.snap_now["investment"] * (1 + plan.assumptions["proj_invest_rate"][0]) ** y)
+
+
+def test_projection_depends_on_account_rate_not_a_fixed_55_percent():
+    lo, hi = demo_cfg(), demo_cfg()
+    lo["pension"]["rate"], hi["pension"]["rate"] = 0.015, 0.055
+    a = calc.compute_plan(lo, TODAY).snap_ret["pension_hpf"]
+    b = calc.compute_plan(hi, TODAY).snap_ret["pension_hpf"]
+    assert b > a
+
+
+def test_projection_without_deposits_has_zero_cash_rate():
+    cfg = demo_cfg()
+    cfg["deposits"] = ""
+    p = calc.compute_plan(cfg, TODAY)
+    assert p.snap_ret["cash"] == 0
+
+
+# ── 引擎核对 #8：赤字不再被清零 ───────────────────────────────────────────
+def deficit_cfg():
+    cfg = demo_cfg()
+    cfg["sim"].update({"monthly_income": 0.0, "monthly_expense": 60000.0})
+    return cfg
+
+
+def test_uncovered_deficit_is_kept_as_negative_cash_and_reported():
+    p = calc.compute_plan(deficit_cfg(), TODAY)
+    h = p.headline
+    assert h["uncovered"] > 0 and h["uncovered_from"] is not None
+    assert h["liquid_real"] < 0                       # 流动资产被赤字拉成负数
+    # 没有被清零：把赤字加回去，等于不亏的资产
+    assert h["nominal"] < p.snap_ret["pension_hpf"] + p.snap_ret["insurance"]
+
+
+def test_no_uncovered_deficit_in_the_demo():
+    p = calc.compute_plan(demo_cfg(), TODAY)
+    assert all(s["uncovered"] == 0 for s in p.scenarios if s.get("available"))
+    assert all(s["uncovered"] == 0 for s in p.stress)
+
+
+def test_stress_also_reports_uncovered_deficit():
+    p = calc.compute_plan(deficit_cfg(), TODAY)
+    assert any(s["uncovered"] > 0 for s in p.stress)
+
+
+# ── 取不到行情：按成本价计，列内标注 ─────────────────────────────────────────
+def test_rows_marked_when_price_falls_back_to_cost():
+    cfg = demo_cfg()
+    cfg["stocks"] = "600036,100,35.0,2023-06-01\n510300,200,4.0,2023-06-01,4.5"   # 第二行有手填当前价
+    p = calc.compute_plan(cfg, TODAY, fund_lookup=lambda c: {}, stock_lookup=lambda c: {})
+    marked = [r["category"] for r in p.rows if "按成本价计" in r["category"]]
+    assert len(marked) == 1 and "600036" in marked[0]
+    assert p.price_failed == ["600036"]
+
+
+def test_rows_not_marked_when_prices_available():
+    p = calc.compute_plan(demo_cfg(), TODAY)
+    assert not any("按成本价计" in r["category"] for r in p.rows)
