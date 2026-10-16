@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 隐私说明
+    url: https://github.com/phoenixhr25/personal-finance/blob/main/PRIVACY.md
+    about: 数据经过哪里、怎么清除；配置文件含个人信息，请勿公开贴出
