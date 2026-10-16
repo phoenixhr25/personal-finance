@@ -323,6 +323,7 @@ def run_scenario(name, income_schedule, p):
 
     cash_depl = None
     uncovered_from = None
+    n = 0
     cur = p["today"]
     while cur < p["date_retire"]:
         income = p["monthly_income"]
@@ -343,7 +344,8 @@ def run_scenario(name, income_schedule, p):
             cash += sell                      # 变现后仍不足的赤字留作负现金，不再被清零
             if cash < 0 and uncovered_from is None:
                 uncovered_from = cur
-        cur += _rd(months=1)
+        n += 1
+        cur = p["today"] + _rd(months=n)      # 从起点算第 n 个月，不从上一个日期累加（避免 2 月把 30/31 号截成 28 号）
 
     total    = pension_bal + hpf_bal + ins_val + investment + cash
     inv_cash = investment + cash
@@ -395,8 +397,8 @@ def run_stress(label, p, investment_shock=1.0, inflation=0.0,
             cash += sell                      # 变现后仍不足的赤字留作负现金，不再被清零
             if cash < 0 and uncovered_from is None:
                 uncovered_from = cur
-        cur += _rd(months=1)
         month_n += 1
+        cur = p["today"] + _rd(months=month_n)
 
     total    = pension_bal + hpf_bal + ins_val + investment + cash
     inv_cash = investment + cash

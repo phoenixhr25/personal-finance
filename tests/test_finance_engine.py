@@ -324,3 +324,37 @@ def test_stress_keeps_uncovered_deficit_too():
     t = fe.run_stress("x", _sp_deficit())
     assert t["uncovered"] == pytest.approx(9000)
     assert t["total_2036"] == pytest.approx(-9000)
+
+
+# ---------- 引擎核对 #10：模拟月数不受起始日影响 ----------
+
+def _months_run(today, retire):
+    """跑一个"每月支出 1、没有任何资产"的模拟，从期末现金反推迭代了几个月。"""
+    p = {"today": today, "date_retire": retire, "cash": 0.0, "investment": 0.0,
+         "pension_bal": 0.0, "hpf_bal": 0.0, "ins_val": 0.0, "pension_rate": 0.0,
+         "hpf_rate": 0.0, "ins_irr": 0.0, "proj_rate": 0.0, "monthly_income": 0.0,
+         "monthly_expense": 1.0, "retire_expense_mo": 0.0, "monthly_pension": 0.0,
+         "deflator": 1.0}
+    return (round(-fe.run_scenario("x", [], p)["cash_2036"]),
+            round(-fe.run_stress("x", p)["total_2036"]))
+
+
+@pytest.mark.parametrize("day", [1, 15, 28, 29, 30, 31])
+def test_twelve_months_is_twelve_iterations_whatever_the_start_day(day):
+    # 起始日 29–31 号时，旧写法"上一个日期 + 1 个月"会被 2 月截成 28 号，多跑一个月
+    start = date(2026, 1, day)
+    assert _months_run(start, date(2027, 1, day)) == (12, 12)
+
+
+def test_month_end_start_does_not_drift_across_february():
+    assert _months_run(date(2026, 9, 30), date(2027, 9, 30)) == (12, 12)
+    assert _months_run(date(2026, 1, 31), date(2028, 1, 31)) == (24, 24)
+
+
+def test_same_day_or_past_retire_date_runs_zero_months():
+    assert _months_run(date(2026, 5, 31), date(2026, 5, 31)) == (0, 0)
+    assert _months_run(date(2026, 5, 31), date(2025, 1, 1)) == (0, 0)
+
+
+def test_short_window_inside_one_month_runs_once():
+    assert _months_run(date(2026, 1, 31), date(2026, 2, 28)) == (1, 1)
