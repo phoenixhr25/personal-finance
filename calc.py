@@ -7,6 +7,7 @@
   3. 把配置喂给引擎，得到资产、养老金、情景、压力测试；
   4. 用同一个两阶段目标比较所有情景。
 """
+import copy
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -26,6 +27,13 @@ GROUP_SOCIAL = "养老金、公积金、保险"
 GROUP_HOLD = "基金、股票、存款"
 GROUP_CASH = "收支与未来假设"
 GROUPS = (GROUP_BASIC, GROUP_SOCIAL, GROUP_HOLD, GROUP_CASH)
+GROUP_QUICK = "快速估算"            # 快速估算模式只有这一组
+QUICK_FUND_LABEL = "快速估算·投资合计"
+QUICK_CASH_LABEL = "快速估算·存款合计"
+
+
+def groups_for(cfg):
+    return (GROUP_QUICK,) if (cfg or {}).get("mode") == "quick" else GROUPS
 
 # ── 参考数据与默认假设 ───────────────────────────────────────────────────
 CITY_BASE_YEAR = 2025
@@ -208,7 +216,36 @@ class Requirement:
 
 
 def requirements(cfg):
-    """当前配置下所有适用的必填项及是否已填。总数会随养老金模式、保单数量变化。"""
+    """当前配置下所有适用的必填项及是否已填。总数会随填写方式、养老金模式、保单数量变化。"""
+    return _quick_requirements(cfg) if cfg.get("mode") == "quick" else _full_requirements(cfg)
+
+
+def _quick_requirements(cfg):
+    """快速估算：只问 9 项，三项资产用合计数，养老金手填月领。"""
+    req = []
+
+    def need(path, label, filled, stage="retire", hint="未填写"):
+        req.append(Requirement(GROUP_QUICK, tuple(path), label, bool(filled), stage, hint))
+
+    need(("global", "date_retire"), "计划停止工作日期", _d(_g(cfg, "global", "date_retire")) is not None)
+    start, _, _ = pension_start_info(cfg)
+    need(("global", "date_pension_start"), "开始领取养老金的日期", start is not None, "pension",
+         "填写出生年月和原法定退休年龄，或直接填写领取日期")
+    need(("sim", "retire_expense_mo"), "退休后每月支出（按今天的物价）",
+         _g(cfg, "sim", "retire_expense_mo") is not None)
+    need(("pension", "monthly"), "养老金月领（按今天的购买力）", _g(cfg, "pension", "monthly") is not None,
+         "pension")
+    need(("sim", "monthly_income"), "每月税后收入", _g(cfg, "sim", "monthly_income") is not None)
+    need(("sim", "monthly_expense"), "每月总支出", _g(cfg, "sim", "monthly_expense") is not None)
+    need(("quick", "investment"), "投资资产合计（基金 + 股票的当前总市值）",
+         _g(cfg, "quick", "investment") is not None, "assets", "未填写；没有填 0")
+    need(("quick", "cash"), "存款合计", _g(cfg, "quick", "cash") is not None, "assets", "未填写；没有填 0")
+    need(("quick", "locked"), "社保与保险类资产合计（个人账户 + 公积金 + 储蓄险现金价值）",
+         _g(cfg, "quick", "locked") is not None, "assets", "未填写；没有填 0")
+    return req
+
+
+def _full_requirements(cfg):
     req = []
 
     def need(group, path, label, filled, stage="retire", hint="未填写"):
@@ -271,7 +308,7 @@ def requirements(cfg):
 
 def required_progress(cfg):
     """各组和合计的 (已填, 总数)。"""
-    out = {g: [0, 0] for g in GROUPS}
+    out = {g: [0, 0] for g in groups_for(cfg)}
     for r in requirements(cfg):
         out[r.group][1] += 1
         out[r.group][0] += 1 if r.filled else 0
@@ -354,6 +391,7 @@ class Plan:
     stress: list = field(default_factory=list)
     paths: dict = field(default_factory=dict)
     error: str = None               # 测算过程中的意外异常（界面据此保留编辑入口）
+    quick: bool = False             # 快速估算：用合计数粗略计算
 
     @property
     def missing(self):
@@ -392,8 +430,11 @@ def _ins_inputs(cfg):
 
 def compute_plan(cfg, today=None, fund_lookup=None, stock_lookup=None):
     today = today or date.today()
-    issues = collect_issues(cfg)
-    plan = Plan(today=today, issues=issues)
+    issues = collect_issues(cfg)            # 缺失项按用户实际的填写方式判断
+    quick = cfg.get("mode") == "quick"
+    plan = Plan(today=today, issues=issues, quick=quick)
+    if quick:
+        cfg = effective_cfg(cfg)            # 其余计算与完整填写走同一套代码
 
     def blocked(stage):
         return any(i.level == "missing" and i.stage == stage for i in issues)
@@ -630,16 +671,17 @@ def failed_plan(cfg, exc, today=None):
 # 配置结构（与导出格式一致；None 表示"未填写"，0 表示"明确填了 0"）
 # ═════════════════════════════════════════════════════════════════════════
 def empty_cfg():
-    return {"global": {}, "pension": {}, "hpf": {}, "insurance": None,
+    return {"mode": None, "global": {}, "pension": {}, "hpf": {}, "insurance": None,
             "funds_dca": None, "stocks": None, "deposits": None,
-            "snapshots": {}, "sim": {}}
+            "snapshots": {}, "sim": {}, "quick": {}}
 
 
 def cfg_from_clean(clean):
     """validate_config 的结果 → 完整配置。文件里没有的项保持 None，不用默认值冒充。"""
     cfg = empty_cfg()
-    for sec in ("global", "pension", "hpf", "snapshots", "sim"):
+    for sec in ("global", "pension", "hpf", "snapshots", "sim", "quick"):
         cfg[sec] = dict(clean.get(sec) or {})
+    cfg["mode"] = clean.get("mode")
     if "insurance" in clean:
         cfg["insurance"] = [dict(p) for p in clean["insurance"]]
     for key in ("funds_dca", "stocks", "deposits"):
@@ -650,10 +692,54 @@ def cfg_from_clean(clean):
 
 def cfg_for_export(cfg):
     """去掉空值之外原样导出；None 写成 null，重新导入后仍是"未填写"。"""
-    out = {}
-    for sec in ("global", "pension", "hpf", "snapshots", "sim"):
+    out = {"mode": cfg.get("mode")}
+    for sec in ("global", "pension", "hpf", "snapshots", "sim", "quick"):
         out[sec] = dict(cfg.get(sec) or {})
     out["insurance"] = [dict(p) for p in cfg["insurance"]] if cfg.get("insurance") is not None else None
     for key in ("funds_dca", "stocks", "deposits"):
         out[key] = cfg.get(key)
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 快速估算：由 9 项合计数派生出完整配置；以及改为完整填写时的带入
+# ═════════════════════════════════════════════════════════════════════════
+def _n(x):
+    return ("%.10f" % float(x)).rstrip("0").rstrip(".") or "0"
+
+
+def effective_cfg(cfg):
+    """快速估算 → 可交给 compute_plan 主体的完整配置。
+
+    简化是明确的，不是默认值：养老金按手填月领；个人账户 + 公积金 + 储蓄险合在一起放进
+    "个人账户"；基金股票合成一行、存款合成一行。其余计算与完整填写完全相同。
+    """
+    if cfg.get("mode") != "quick":
+        return cfg
+    eff = copy.deepcopy(cfg)
+    eff["mode"] = None
+    q = cfg.get("quick") or {}
+    eff["pension"] = {**(cfg.get("pension") or {}), "auto": False, "account": q.get("locked")}
+    eff["hpf"] = {**(cfg.get("hpf") or {}), "balance": 0.0}
+    eff["insurance"] = []
+    inv, cash = q.get("investment"), q.get("cash")
+    eff["funds_dca"] = f"{QUICK_FUND_LABEL},1,{_n(inv)},{_n(inv)}" if inv is not None else None
+    eff["stocks"] = ""
+    eff["deposits"] = f"{QUICK_CASH_LABEL},活期,{_n(cash)},0" if cash is not None else None
+    return eff
+
+
+def quick_to_full(cfg):
+    """快速估算改为完整填写：能带入的带入，带不进去的留空让用户补，不替用户拆分。"""
+    out = copy.deepcopy(cfg)
+    out["mode"] = "full"
+    q = cfg.get("quick") or {}
+    if out.get("funds_dca") is None and q.get("investment") is not None:
+        out["funds_dca"] = f"{QUICK_FUND_LABEL},1,{_n(q['investment'])},{_n(q['investment'])}"
+    if out.get("deposits") is None and q.get("cash") is not None:
+        out["deposits"] = f"{QUICK_CASH_LABEL},活期,{_n(q['cash'])},0"
+    pension = dict(out.get("pension") or {})
+    if pension.get("monthly") is not None and pension.get("auto") is None:
+        pension["auto"] = False         # 保留用户在快速估算里填的月领
+    out["pension"] = pension
     return out

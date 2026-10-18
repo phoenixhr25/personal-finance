@@ -101,6 +101,38 @@ def load_demo():
     load(clean, "demo")        # 示例有常驻标识，不再另发一次性提示
 
 
+def mode():
+    """填写方式：quick 快速估算；其余（含未选择）按完整填写。"""
+    return "quick" if cfg().get("mode") == "quick" else "full"
+
+
+def set_mode(new):
+    """切换填写方式。快速估算 → 完整填写时，把能带入的带入；两种方式共用的字段保持不变。"""
+    c = cfg()
+    if new == mode() and c.get("mode") is not None:
+        return
+    if new == "full" and c.get("mode") == "quick":
+        st.session_state[CFG] = calc.quick_to_full(c)
+        st.session_state[NOTICE] = ("已改为完整填写。快速估算里的投资合计、存款合计已各作为一行带入，"
+                                    "社保与保险类合计请拆成个人账户、公积金、储蓄险分别填写。")
+    else:
+        c["mode"] = new
+    touch()
+    _drop_widget_state()
+
+
+GOTO = "_goto"
+
+
+def start_quick():
+    """首页「快速估算」的回调：切换方式，并让外壳跳到数据页。
+
+    不能在按钮后面直接 switch_page：这一步会把来源改成"手动填写"，首次打开的空状态
+    随之不再渲染，按钮之后的代码就走不到了。"""
+    set_mode("quick")
+    st.session_state[GOTO] = "data"
+
+
 def clear_all():
     st.session_state[CFG] = calc.empty_cfg()
     st.session_state[SRC] = "none"

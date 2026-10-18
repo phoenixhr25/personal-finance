@@ -56,6 +56,8 @@ def main(default="overview"):
         setattr(nav, key, page)
         pages.append(page)
     current = st.navigation(pages)
+    if st.session_state.pop(state.GOTO, None) == "data":
+        st.switch_page(nav.data)
 
     state.process_uploads()          # 先处理上传，再渲染待确认 / 错误提示
     _sidebar(state.plan())

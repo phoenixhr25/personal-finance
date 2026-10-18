@@ -6,7 +6,6 @@
 import streamlit as st
 
 import state
-from calc import GROUPS
 from views import common as C
 
 
@@ -16,6 +15,7 @@ def render(nav):
                 unsafe_allow_html=True)
     plan = state.plan()
     C.source_banner()
+    C.mode_banner(plan)
 
     if C.plan_error(plan):
         return
@@ -43,8 +43,11 @@ def _empty_state(nav):
         st.file_uploader("导入配置", type=["json"], key="up_main", label_visibility="collapsed")
     with c3.container(border=True):
         st.markdown("**填写我的数据**")
-        st.caption("从零开始填，随时可以返回修改。")
-        if st.button("开始填写", key="start_fill", type="primary", use_container_width=True):
+        st.caption("没有配置文件也可以。快速估算只填 9 项合计数，约 3 分钟，得到粗略结论；"
+                   "完整填写逐项录入，更准确。随时可以切换。")
+        st.button("快速估算", key="start_quick", type="primary", use_container_width=True,
+                  on_click=state.start_quick)
+        if st.button("完整填写", key="start_fill", use_container_width=True):
             st.switch_page(nav.data)
     st.caption("数据只在本次使用期间经过服务器内存，不写入文件或数据库。"
                f"[隐私说明]({C.PRIVACY_URL})。完整使用说明在「数据与假设」页底部。")
@@ -56,11 +59,9 @@ def _missing(plan, nav):
     st.subheader("还差几项信息，才能给出测算")
     st.write(f"必填项还缺 **{len(miss)}** 项。没填的项不会用默认值顶替，"
              "以免得出一个看起来属于你、其实不是你的结论。")
-    for group in GROUPS:
-        items = [i for i in miss if i.group == group]
-        if items:
-            st.markdown(f"**{group}**")
-            C.issue_lines(items)
+    for group in dict.fromkeys(i.group for i in miss):
+        st.markdown(f"**{group}**")
+        C.issue_lines([i for i in miss if i.group == group])
     if nav is not None:
         c1, c2 = st.columns(2)
         if c1.button("继续填写", key="continue_fill", type="primary", use_container_width=True):
@@ -89,14 +90,15 @@ def _conclusion(plan, nav):
 
     # 结论
     with st.container(border=True):
+        rough = "粗估：" if plan.quick else ""
         if t["total"] <= 0:
-            st.markdown("### 按当前假设，两阶段目标为 ¥0")
+            st.markdown(f"### {rough}按当前假设，两阶段目标为 ¥0")
             st.write(f"退休时资产（今日购买力）{C.wan(head['real'])}。目标为 0，不计算余量比例。")
         elif head["meets"]:
-            st.markdown(f"### 按当前假设，测算资产 :green[高于] 目标 {C.wan(head['margin'])}")
+            st.markdown(f"### {rough}按当前假设，测算资产 :green[高于] 目标 {C.wan(head['margin'])}")
             st.write(f"资产超过目标的 {C.pct(head['margin_pct'])}（余量 ÷ 目标）。")
         else:
-            st.markdown(f"### 按当前假设，测算资产 :orange[低于] 目标 {C.wan(-head['margin'])}")
+            st.markdown(f"### {rough}按当前假设，测算资产 :orange[低于] 目标 {C.wan(-head['margin'])}")
             st.write(f"缺口相当于目标的 {C.pct(-head['margin_pct'])}。")
         st.caption("口径：「继续工作」情景下，到计划停止工作日的资产与两阶段目标比较，"
                    "均为今日购买力。余量比例表示资产超出目标的幅度，不是成功概率，"

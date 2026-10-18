@@ -3,7 +3,6 @@ import pandas as pd
 import streamlit as st
 
 import state
-from calc import GROUPS
 from views import common as C
 
 
@@ -11,6 +10,7 @@ def render(nav):
     st.title("情景")
     plan = state.plan()
     C.source_banner()
+    C.mode_banner(plan)
     if C.plan_error(plan):
         return
     if not state.has_data():
@@ -18,11 +18,9 @@ def render(nav):
         return
     if not plan.retire_ready:
         st.subheader("情景比较需要先补全退休测算所需的信息")
-        for group in GROUPS:
-            items = [i for i in plan.missing if i.group == group]
-            if items:
-                st.markdown(f"**{group}**")
-                C.issue_lines(items)
+        for group in dict.fromkeys(i.group for i in plan.missing):
+            st.markdown(f"**{group}**")
+            C.issue_lines([i for i in plan.missing if i.group == group])
         if nav is not None:
             st.page_link(nav.data, label="去「数据与假设」补全")
         return

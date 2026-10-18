@@ -6,9 +6,10 @@ import math
 from datetime import date
 
 CONFIG_FORMAT = "personal-finance-config"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3          # v3：新增 mode（quick / full）和 quick 合计数；v2 文件可直接导入
 MAX_FILE_BYTES = 1_000_000
 MAX_TEXT_CHARS = 20_000
+MODES = ("quick", "full")      # 快速估算 / 完整填写；缺省按完整填写
 RETIRE_AGES = (50, 55, 60)   # 改革前的原法定退休年龄
 # 内置计发基数预设的城市（与 calc.CITY_BASES 一致，有测试保证）；其他城市选"其他"并手填
 CITY_NAMES = ("深圳", "北京", "上海", "广州", "杭州", "成都", "武汉", "南京", "其他（手动输入）")
@@ -43,6 +44,8 @@ _SPEC = {
         "birth": ("d",), "contrib_end": ("d",),
     },
     "hpf": {"balance": ("f", 0, 1e9), "years": ("f", 0, 80)},
+    # 快速估算用的三个合计数（元）。投资 = 基金 + 股票市值；存款合计；锁定类 = 个人账户 + 公积金 + 储蓄险现金价值
+    "quick": {"investment": ("f", 0, 1e10), "cash": ("f", 0, 1e10), "locked": ("f", 0, 1e10)},
     "snapshots": {k: ("f", 0, 1e10) for k in
                   ("b1_ph", "b1_ins", "b1_inv", "b1_csh", "b2_ph", "b2_ins", "b2_inv", "b2_csh")},
     "sim": {
@@ -197,7 +200,14 @@ def validate_config(raw):
             else:
                 clean[key] = v
 
-    known = set(_SPEC) | {"insurance", "format", "schema_version"} | set(_TEXT_FIELDS)
+    mode = data.get("mode")
+    if mode is not None:
+        if mode in MODES:
+            clean["mode"] = mode
+        else:
+            problems.append(f"mode 只能是 {list(MODES)}，收到 {mode!r}")
+
+    known = set(_SPEC) | {"insurance", "format", "schema_version", "mode"} | set(_TEXT_FIELDS)
     for key in data:
         if key not in known:
             warnings.append(f"忽略未知字段 {key}")

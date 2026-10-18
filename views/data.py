@@ -23,16 +23,45 @@ def _goto(group):
     st.session_state[GROUP_KEY] = group
 
 
+MODE_LABELS = {"quick": "快速估算（9 项合计数，粗略）", "full": "完整填写（逐项，更准确）"}
+MODE_RADIO = "w:data_mode"
+
+
+def _on_mode_change():
+    chosen = st.session_state.get(MODE_RADIO, "")
+    state.set_mode("quick" if chosen == MODE_LABELS["quick"] else "full")
+
+
 def render(nav):
     st.title("数据与假设")
     plan = state.plan()
     C.source_banner()
+    C.mode_banner(plan)
 
     C.plan_error(plan)           # 数据页照常渲染，用户可以直接改输入
+    st.radio("填写方式", list(MODE_LABELS.values()), horizontal=True, key=MODE_RADIO,
+             index=0 if state.mode() == "quick" else 1, on_change=_on_mode_change,
+             help="快速估算只问 9 项合计数，几分钟就能看到一个粗略结论。完整填写逐项录入，更准确。"
+                  "两种方式随时可以切换，已填的内容会保留。")
     prog = calc.required_progress(state.cfg())
     done, total = prog["_all"]
     if total:
         st.progress(done / total, text=f"必填项 已填 {done} / {total}")
+
+    if state.mode() == "quick":
+        st.caption("输入框留空表示未填写，确实为零请填 0。这里的三个合计数是估算用的，"
+                   "之后可以改为完整填写，逐项拆开。")
+        st.divider()
+        _group_status(plan, calc.GROUP_QUICK)
+        _quick_form()
+        st.divider()
+        if done == total and total and nav is not None:
+            st.success("必填项已全部填写，可以到「概览」查看粗略结果。")
+        if nav is not None:
+            st.page_link(nav.overview, label="查看测算结果")
+        _tail_expanders()
+        return
+
     st.caption("按下面四组依次填写，也可以随时跳到任意一组。输入框留空表示未填写，确实为零请填 0；"
                "留空的假设项使用默认值，并在各页标注「默认」。")
 
@@ -66,6 +95,10 @@ def render(nav):
 
     with st.expander("高级设置（可选）：历史快照、目标资产配置"):
         _advanced()
+    _tail_expanders()
+
+
+def _tail_expanders():
     with st.expander("使用说明（完整版）"):
         try:
             with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "USER_GUIDE.md"),
@@ -76,6 +109,29 @@ def render(nav):
     with st.expander("重新开始"):
         st.caption("清空页面上的全部数据。建议先在侧边栏导出当前配置。")
         st.button("清空当前数据", key="clear_all", on_click=state.clear_all)
+
+
+# ── 快速估算 ─────────────────────────────────────────────────────────────
+def _quick_form():
+    F.date_field(("global", "date_retire"), "计划停止工作日期", required=True,
+                 help="你计划不再靠工资生活的日期，不一定等于法定退休日期。")
+    F.number(("sim", "retire_expense_mo"), "退休后每月支出（元）", step=500.0, required=True,
+             help="按今天的物价估算。未来的通胀由「通胀率」假设处理，不用在这里加。")
+    st.markdown("**开始领取养老金的日期**")
+    _pension_start_fields(age_required=state.get("pension", "birth") is not None)
+    F.number(("pension", "monthly"), "养老金月领（元，按今天的购买力）", step=100.0, required=True,
+             help="可以在国家社会保险公共服务平台或「掌上 12333」的养老金测算里查（适用范围以平台说明为准），"
+                  "按今天的购买力填。")
+    _income_expense()
+    st.markdown("**三个合计数**")
+    st.caption("只要总数，不用拆开。不知道的项可以先估一个大概，之后改为完整填写时再拆。")
+    F.number(("quick", "investment"), "投资资产合计（元）", step=10000.0, required=True,
+             help="基金和股票的当前总市值，加在一起。没有填 0。")
+    F.number(("quick", "cash"), "存款合计（元）", step=10000.0, required=True,
+             help="活期、定期、货币基金等现金类资产，加在一起。没有填 0。")
+    F.number(("quick", "locked"), "社保与保险类资产合计（元）", step=10000.0, required=True,
+             help="养老保险个人账户余额 + 住房公积金余额 + 储蓄险现金价值，加在一起。没有填 0。")
+    _assumptions()
 
 
 def _group_status(plan, group):
@@ -101,10 +157,14 @@ def _basic():
              help="按今天的物价估算。未来的通胀由「通胀率」假设处理，不用在这里加。")
     st.markdown("**开始领取养老金的日期**")
     auto = state.get("pension", "auto", default=True)
-    has_birth = state.get("pension", "birth") is not None
+    _pension_start_fields(age_required=bool(auto) or state.get("pension", "birth") is not None)
+
+
+def _pension_start_fields(age_required):
+    """出生年月 + 原法定退休年龄 → 按延迟退休规则推算领取日；没有时手填。完整填写与快速估算共用。"""
     F.date_field(("pension", "birth"), "出生年月", help="填写后按渐进式延迟退休规则推算领取日期，只看年月。")
     F.select(("pension", "retire_age"), "原法定退休年龄（改革前）", list(RETIRE_AGES),
-             required=bool(auto) or has_birth,
+             required=age_required,
              help="男职工 60；原 55 岁退休的女职工 55；原 50 岁退休的女职工 50。")
     start, age_m, how = calc.pension_start_info(state.cfg())
     derived = age_m is not None
@@ -207,12 +267,19 @@ def _count(key, parser):
 
 
 # ── 4 收支与未来假设 ─────────────────────────────────────────────────────
-def _cash():
+def _income_expense():
     F.number(("sim", "monthly_income"), "每月税后收入（元）", step=500.0, required=True,
              help="用来推算停止工作前每月的结余。")
     F.number(("sim", "monthly_expense"), "每月总支出（元）", step=500.0, required=True,
              help="含房贷、生活等全部开销。按固定金额推算，不随通胀增长。")
 
+
+def _cash():
+    _income_expense()
+    _assumptions()
+
+
+def _assumptions():
     with st.expander("可选项与未来假设（都有默认值，可以先不改）"):
         F.number(("sim", "semi_income"), "半退休月收入（元，可选）", step=500.0,
                  help="不填则不计算「半退休」情景。")

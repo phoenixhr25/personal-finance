@@ -16,6 +16,7 @@ def render(nav):
     st.title("资产")
     plan = state.plan()
     C.source_banner()
+    C.mode_banner(plan)
     if C.plan_error(plan):
         return
     if not state.has_data():

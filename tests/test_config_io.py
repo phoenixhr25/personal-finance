@@ -247,7 +247,7 @@ def test_v1_retire_age_65_migrates_to_60():
 
 def test_v2_fields_roundtrip():
     cfg = wrap_export(sample_export())
-    assert cfg["schema_version"] == 2
+    assert cfg["schema_version"] == 3
     cfg["global"]["inflation"] = 0.025
     cfg["pension"]["birth"] = "1984-07-01"
     cfg["pension"]["contrib_end"] = "2036-01-01"

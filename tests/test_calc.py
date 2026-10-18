@@ -500,3 +500,108 @@ def test_rows_marked_when_price_falls_back_to_cost():
 def test_rows_not_marked_when_prices_available():
     p = calc.compute_plan(demo_cfg(), TODAY)
     assert not any("按成本价计" in r["category"] for r in p.rows)
+
+
+# ── 快速估算模式 ─────────────────────────────────────────────────────────
+def quick_cfg_from(full_plan):
+    """用完整示例的数字拼一份快速估算配置：三个合计数 + 手填月领（取完整示例推算出的月领）。"""
+    cfg = demo_cfg()
+    snap = full_plan.snap_now
+    q = calc.empty_cfg()
+    q["mode"] = "quick"
+    q["global"] = {"date_retire": cfg["global"]["date_retire"]}
+    q["pension"] = {"birth": cfg["pension"]["birth"], "retire_age": cfg["pension"]["retire_age"],
+                    "monthly": full_plan.pension_real}
+    q["sim"] = {k: cfg["sim"][k] for k in ("retire_expense_mo", "monthly_income", "monthly_expense")}
+    q["quick"] = {"investment": snap["investment"], "cash": snap["cash"],
+                  "locked": snap["pension_hpf"] + snap["insurance"]}
+    return q
+
+
+def test_quick_mode_asks_for_nine_items_and_computes_nothing_until_filled():
+    q = calc.empty_cfg()
+    q["mode"] = "quick"
+    p = calc.compute_plan(q, TODAY)
+    assert p.quick and len(p.missing) == 9 and not p.assets_ready
+    assert calc.required_progress(q) == {calc.GROUP_QUICK: (0, 9), "_all": (0, 9)}
+    assert calc.groups_for(q) == (calc.GROUP_QUICK,)
+    assert all(i.group == calc.GROUP_QUICK for i in p.missing)
+
+
+def test_quick_mode_uses_the_same_target_as_the_full_mode(plan):
+    q = quick_cfg_from(plan)
+    p = calc.compute_plan(q, TODAY)
+    assert p.quick and p.retire_ready and not p.missing
+    assert p.target["total"] == pytest.approx(plan.target["total"])        # 同一把尺子
+    assert p.target["bridge_months"] == plan.target["bridge_months"]
+    # 简化只影响资产增长：公积金、储蓄险并入个人账户后统一按记账利率，结果比完整填写保守
+    assert p.headline["real"] < plan.headline["real"]
+    assert p.headline["real"] > plan.headline["real"] * 0.9
+
+
+def test_quick_mode_unfilled_vs_zero_totals():
+    q = quick_cfg_from(calc.compute_plan(demo_cfg(), TODAY))
+    q["quick"]["cash"] = None
+    p = calc.compute_plan(q, TODAY)
+    assert [i.path for i in p.missing] == [("quick", "cash")] and not p.assets_ready
+    q["quick"]["cash"] = 0.0                       # 明确填 0
+    assert calc.compute_plan(q, TODAY).retire_ready
+
+
+def test_quick_mode_does_not_invent_a_pension():
+    q = quick_cfg_from(calc.compute_plan(demo_cfg(), TODAY))
+    q["pension"]["monthly"] = None
+    p = calc.compute_plan(q, TODAY)
+    assert not p.pension_ready and any(i.path == ("pension", "monthly") for i in p.missing)
+
+
+def test_quick_mode_date_prerequisites_are_located():
+    q = quick_cfg_from(calc.compute_plan(demo_cfg(), TODAY))
+    q["pension"].pop("birth")
+    miss = calc.compute_plan(q, TODAY).missing
+    assert [i.path for i in miss] == [("global", "date_pension_start")]
+    q["global"]["date_pension_start"] = "2045-03-01"     # 没有出生年月时手填
+    assert calc.compute_plan(q, TODAY).retire_ready
+
+
+def test_effective_cfg_makes_explicit_simplifications():
+    q = quick_cfg_from(calc.compute_plan(demo_cfg(), TODAY))
+    eff = calc.effective_cfg(q)
+    assert eff["pension"]["auto"] is False and eff["insurance"] == [] and eff["stocks"] == ""
+    assert eff["hpf"]["balance"] == 0.0
+    assert eff["funds_dca"].startswith(calc.QUICK_FUND_LABEL)
+    assert eff["deposits"].startswith(calc.QUICK_CASH_LABEL)
+    assert calc.effective_cfg(demo_cfg()) is not None and calc.effective_cfg(demo_cfg())["mode"] is None
+
+
+def test_quick_to_full_carries_what_it_can_and_asks_for_the_rest():
+    q = quick_cfg_from(calc.compute_plan(demo_cfg(), TODAY))
+    full = calc.quick_to_full(q)
+    assert full["mode"] == "full"
+    assert calc.QUICK_FUND_LABEL in full["funds_dca"] and calc.QUICK_CASH_LABEL in full["deposits"]
+    assert full["pension"]["auto"] is False and full["pension"]["monthly"] == q["pension"]["monthly"]
+    miss = {i.path for i in calc.compute_plan(full, TODAY).missing}
+    # 社保、公积金、保险需要拆开填；不替用户拆
+    assert ("pension", "account") in miss and ("hpf", "balance") in miss and ("insurance",) in miss
+    assert q["mode"] == "quick"                    # 原配置不被修改
+
+
+def test_mode_survives_export_import_and_v2_files_still_load():
+    q = quick_cfg_from(calc.compute_plan(demo_cfg(), TODAY))
+    raw = json.loads(json.dumps(wrap_export(calc.cfg_for_export(q))))
+    assert raw["schema_version"] == 3 and raw["mode"] == "quick"
+    clean, _ = validate_config(raw)
+    back = calc.cfg_from_clean(clean)
+    assert back["mode"] == "quick" and back["quick"] == q["quick"]
+    v2 = wrap_export(calc.cfg_for_export(demo_cfg()))
+    v2["schema_version"] = 2
+    v2.pop("mode"); v2.pop("quick")
+    assert calc.cfg_from_clean(validate_config(v2)[0])["mode"] is None
+
+
+def test_invalid_mode_is_rejected():
+    from config_io import ConfigError
+    raw = wrap_export(calc.cfg_for_export(demo_cfg()))
+    raw["mode"] = "turbo"
+    with pytest.raises(ConfigError):
+        validate_config(raw)

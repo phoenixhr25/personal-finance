@@ -481,3 +481,120 @@ def test_upload_values_are_read_from_session_before_widgets_render():
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.markdown[0].value == "pending"
+
+
+# ── 快速估算 ─────────────────────────────────────────────────────────────
+QUICK_LABEL = "快速估算（9 项合计数，粗略）"
+FULL_LABEL = "完整填写（逐项，更准确）"
+
+
+def quick_cfg():
+    import calc as c
+    full = c.compute_plan(demo_cfg(), date(2026, 10, 11))
+    cfg = demo_cfg()
+    snap = full.snap_now
+    q = c.empty_cfg()
+    q["mode"] = "quick"
+    q["global"] = {"date_retire": cfg["global"]["date_retire"]}
+    q["pension"] = {"birth": cfg["pension"]["birth"], "retire_age": cfg["pension"]["retire_age"],
+                    "monthly": round(full.pension_real, 2)}
+    q["sim"] = {k: cfg["sim"][k] for k in ("retire_expense_mo", "monthly_income", "monthly_expense")}
+    q["quick"] = {"investment": snap["investment"], "cash": snap["cash"],
+                  "locked": snap["pension_hpf"] + snap["insurance"]}
+    return q
+
+
+def test_first_open_offers_quick_and_full_entry():
+    at = run_page("overview")
+    assert at.button(key="start_quick") and at.button(key="start_fill")
+    assert not at.metric
+
+
+def test_quick_button_sets_mode_and_opens_a_nine_item_form():
+    at = run_page("overview")
+    at.button(key="start_quick").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["cfg"]["mode"] == "quick"
+    assert "数据与假设" in [t.value for t in at.title]
+    assert at.get("progress")[0].proto.text == "必填项 已填 0 / 9"
+    labels = [n.label for n in at.number_input]
+    for must in ("投资资产合计（元）", "存款合计（元）", "社保与保险类资产合计（元）"):
+        assert must in labels
+    assert at.session_state["cfg"]["sim"] == {}                       # 没有凭空填值
+
+
+def test_quick_form_filled_gives_a_rough_conclusion_on_overview():
+    ov = run_page("overview", quick_cfg(), "manual")
+    assert "粗估：按当前假设" in texts(ov)
+    assert "快速估算" in " ".join(i.value for i in ov.info)
+    assert metric(ov, "两阶段目标") == C.wan(calc.compute_plan(quick_cfg()).target["total"])
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_every_page_says_it_is_a_rough_estimate_in_quick_mode(page):
+    at = run_page(page, quick_cfg(), "manual")
+    assert any("快速估算" in i.value for i in at.info)
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_every_page_renders_for_empty_and_partial_quick_config(page):
+    empty = calc.empty_cfg()
+    empty["mode"] = "quick"
+    run_page(page, empty, "manual")
+    part = quick_cfg()
+    part["quick"]["cash"] = None
+    run_page(page, part, "manual")
+
+
+def test_quick_overview_lists_the_missing_totals_without_a_conclusion():
+    part = quick_cfg()
+    part["quick"]["cash"] = None
+    at = run_page("overview", part, "manual")
+    body = texts(at)
+    assert "存款合计" in body and "按当前假设" not in body and not at.metric
+
+
+def test_editing_a_total_in_the_form_writes_back_and_changes_the_result():
+    at = run_page("data", quick_cfg(), "manual")
+    n = next(n for n in at.number_input if n.label == "存款合计（元）")
+    n.set_value(0.0).run()
+    assert not at.exception
+    assert at.session_state["cfg"]["quick"]["cash"] == 0.0
+    before = calc.compute_plan(quick_cfg()).headline["margin"]
+    after = calc.compute_plan(at.session_state["cfg"]).headline["margin"]
+    assert after < before
+
+
+def test_switch_to_full_keeps_inputs_and_asks_for_the_split():
+    at = run_page("data", quick_cfg(), "manual")
+    at.radio(key="w:data_mode").set_value(FULL_LABEL).run()
+    assert not at.exception, [e.value for e in at.exception]
+    cfg = at.session_state["cfg"]
+    assert cfg["mode"] == "full"
+    assert calc.QUICK_FUND_LABEL in cfg["funds_dca"] and calc.QUICK_CASH_LABEL in cfg["deposits"]
+    assert cfg["pension"]["monthly"] == quick_cfg()["pension"]["monthly"]
+    assert cfg["quick"] == quick_cfg()["quick"]                    # 快速估算的合计数保留，便于对照
+    assert any("拆成个人账户、公积金、储蓄险" in s.value for s in at.success)
+    assert at.get("progress")[0].proto.text.startswith("必填项 已填")
+
+
+def test_switch_back_to_quick_keeps_everything():
+    at = run_page("data", quick_cfg(), "manual")
+    at.radio(key="w:data_mode").set_value(FULL_LABEL).run()
+    at.radio(key="w:data_mode").set_value(QUICK_LABEL).run()
+    assert not at.exception
+    cfg = at.session_state["cfg"]
+    assert cfg["mode"] == "quick" and cfg["quick"] == quick_cfg()["quick"]
+    assert not calc.compute_plan(cfg).missing
+
+
+def test_full_demo_is_unchanged_by_quick_mode_existing():
+    at = run_page("overview", demo_cfg(), "demo")
+    assert not any("快速估算" in i.value for i in at.info)
+    assert "粗估" not in texts(at)
+
+
+def test_quick_config_roundtrips_through_the_export_function_path():
+    q = quick_cfg()
+    clean, notes = validate_config(wrap_export(calc.cfg_for_export(q)))
+    assert notes == [] and calc.cfg_from_clean(clean)["mode"] == "quick"
